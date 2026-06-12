@@ -1,5 +1,6 @@
 import Konva from 'konva'
 import { getMainLayer, getFeedbackLayer, getCanvasSize } from '../canvas/stage'
+import { revealShape } from '../canvas/draw-animation'
 import { useObjectsStore, type CanvasObject } from '../store/objects'
 import {
   DIRECTION_LABELS,
@@ -82,9 +83,10 @@ function createNode(cmd: DrawCommand, id: string): Konva.Shape {
   const r = resolveSize(cmd.props?.size)
   const color = cmd.props?.color ?? DEFAULT_COLOR
 
+  // 填充图形同时带同色描边：渐进绘制动画沿描边逐笔画出轮廓
   switch (cmd.shape) {
     case 'circle':
-      return new Konva.Circle({ id, x, y, radius: r, fill: color })
+      return new Konva.Circle({ id, x, y, radius: r, fill: color, stroke: color, strokeWidth: 3 })
     case 'rect':
       return new Konva.Rect({
         id,
@@ -93,9 +95,20 @@ function createNode(cmd: DrawCommand, id: string): Konva.Shape {
         width: r * 2,
         height: r * 2,
         fill: color,
+        stroke: color,
+        strokeWidth: 3,
       })
     case 'triangle':
-      return new Konva.RegularPolygon({ id, x, y, sides: 3, radius: r, fill: color })
+      return new Konva.RegularPolygon({
+        id,
+        x,
+        y,
+        sides: 3,
+        radius: r,
+        fill: color,
+        stroke: color,
+        strokeWidth: 3,
+      })
     case 'line':
       return new Konva.Line({
         id,
@@ -179,6 +192,7 @@ function execDraw(cmd: DrawCommand): ExecResult {
   const id = `obj-${nextId++}`
   const node = createNode(cmd, id)
   getMainLayer().add(node)
+  revealShape(node, cmd.shape === 'line' ? null : (cmd.props?.color ?? DEFAULT_COLOR))
   useObjectsStore().register({
     id,
     shape: cmd.shape,
