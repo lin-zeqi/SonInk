@@ -5,7 +5,9 @@ import { useCommandStore } from '../store/command'
 const store = useCommandStore()
 const text = ref('')
 
-function send() {
+function send(event: KeyboardEvent) {
+  // 中文输入法用回车确认候选词时不应触发提交
+  if (event.isComposing) return
   store.submit(text.value, 'debug')
   text.value = ''
 }
@@ -17,7 +19,7 @@ function send() {
     <input
       v-model="text"
       placeholder="无麦克风时输入指令文本，回车提交"
-      @keyup.enter="send"
+      @keydown.enter="send"
     />
   </div>
 </template>

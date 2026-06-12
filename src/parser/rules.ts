@@ -21,9 +21,12 @@ const MISS: ParseResult = { matched: false }
 
 const CLEAR_PATTERN = /清空|清除|全部删除|重新开始|擦掉所有/
 
-const DRAW_VERB_PATTERN = /画|绘|来|加|添|整/
+const DRAW_VERB_PATTERN = /画|绘|来|加|添|整|生成|创建/
 
 const DELETE_PATTERN = /删掉|删除|去掉|移除|擦掉|删/
+
+/** 复合指令连接词与子句分隔符 */
+const CLAUSE_SPLITTER = /[，,。；;]|然后|接着|以及|还有|和/
 
 const SELECT_PATTERN = /选中|选择|选取|选/
 
@@ -148,14 +151,13 @@ function parseMove(text: string): ParseResult {
 }
 
 /**
- * 解析一条自然语言指令。
- * 注意：先做归一化（语气词/标点清洗），所有匹配基于归一化文本。
+ * 解析单个子句。
  * 意图判定顺序有讲究：
  * 1. 清空先于删除（"全部删除"不应落入单对象删除）；
  * 2. 绘制要求"绘制动词 + 图形词"同时存在，且先于移动判定
  *    （"画一个圆放在左上角"是绘制；"把圆放到左上角"无绘制动词，是移动）。
  */
-export function parseCommand(raw: string): ParseResult {
+function parseSingle(raw: string): ParseResult {
   const text = normalize(raw)
   if (!text) return MISS
 
@@ -180,4 +182,40 @@ export function parseCommand(raw: string): ParseResult {
   }
 
   return MISS
+}
+
+/**
+ * 解析一条自然语言指令（入口）。
+ *
+ * 先尝试按连接词拆分子句（"画一个红色的圆和一个蓝色的圆"、
+ * "画一个圆，然后在左上角画个方块"）：所有子句都解析成功才采纳拆分结果，
+ * 任一子句失败则回退整句解析——保证拆分逻辑永远不让原本能解析的句子变差。
+ * 无动词子句（"…和一个蓝色的圆"的后半句）承接前一子句的绘制意图。
+ */
+export function parseCommand(raw: string): ParseResult {
+  const clauses = raw.split(CLAUSE_SPLITTER).filter((c) => normalize(c) !== '')
+
+  if (clauses.length > 1) {
+    const commands: DslCommand[] = []
+    let allMatched = true
+    let prevWasDraw = false
+
+    for (const clause of clauses) {
+      let result = parseSingle(clause)
+      if (!result.matched && prevWasDraw) {
+        const text = normalize(clause)
+        if (lookup(text, SHAPE_SYNONYMS) !== undefined) result = parseDraw(text)
+      }
+      if (!result.matched) {
+        allMatched = false
+        break
+      }
+      commands.push(...result.commands)
+      prevWasDraw = result.commands[result.commands.length - 1]?.action === 'draw'
+    }
+
+    if (allMatched && commands.length > 0) return { matched: true, commands }
+  }
+
+  return parseSingle(raw)
 }
