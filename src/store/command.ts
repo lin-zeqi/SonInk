@@ -1,4 +1,13 @@
 import { defineStore } from 'pinia'
+import type { ListenState } from '../speech/recognizer'
+
+export type CommandSource = 'voice' | 'debug'
+
+export interface CommandEntry {
+  id: number
+  text: string
+  source: CommandSource
+}
 
 /**
  * 指令流中枢：语音识别与调试输入统一汇入 submit()，
@@ -6,16 +15,17 @@ import { defineStore } from 'pinia'
  */
 export const useCommandStore = defineStore('command', {
   state: () => ({
-    interim: '', // 流式识别的中间文本
-    history: [], // { id, text, source: 'voice' | 'debug' }
-    listenState: 'idle', // idle | listening
+    /** 流式识别的中间文本 */
+    interim: '',
+    history: [] as CommandEntry[],
+    listenState: 'idle' as ListenState,
     speechSupported: true,
   }),
   actions: {
-    setInterim(text) {
+    setInterim(text: string) {
       this.interim = text
     },
-    submit(text, source) {
+    submit(text: string, source: CommandSource) {
       const t = text.trim()
       if (!t) return
       this.interim = ''
@@ -23,6 +33,6 @@ export const useCommandStore = defineStore('command', {
     },
   },
   getters: {
-    lastCommand: (s) => s.history[s.history.length - 1] ?? null,
+    lastCommand: (s): CommandEntry | null => s.history[s.history.length - 1] ?? null,
   },
 })
