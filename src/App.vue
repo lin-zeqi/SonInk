@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import { initStage } from './canvas/stage'
 import { createRecognizer, isSpeechSupported, type Recognizer } from './speech/recognizer'
+import { onSpeakStateChange } from './speech/tts'
 import { useCommandStore } from './store/command'
 import { useHistoryStore } from './store/history'
 import { useSettingsStore } from './store/settings'
@@ -9,6 +10,7 @@ import { setupPipeline } from './pipeline'
 import CaptionBar from './components/CaptionBar.vue'
 import DebugInput from './components/DebugInput.vue'
 import AskPanel from './components/AskPanel.vue'
+import HistoryPanel from './components/HistoryPanel.vue'
 import SettingsPanel from './components/SettingsPanel.vue'
 
 const canvasContainer = ref<HTMLDivElement | null>(null)
@@ -49,6 +51,19 @@ onMounted(() => {
       onError: (err) => console.warn('[speech]', err),
     })
   }
+
+  // TTS 播报期间暂停识别，避免系统把自己的播报当成指令（自听回环）
+  let resumeAfterTts = false
+  onSpeakStateChange((speaking) => {
+    if (!recognizer) return
+    if (speaking && recognizer.isRunning()) {
+      resumeAfterTts = true
+      recognizer.stop()
+    } else if (!speaking && resumeAfterTts) {
+      resumeAfterTts = false
+      recognizer.start()
+    }
+  })
 })
 
 onUnmounted(() => {
@@ -93,9 +108,16 @@ function toggleListen() {
       >
         ↪ 重做
       </button>
+      <button class="settings-btn" :class="{ on: store.historyOpen }" @click="store.toggleHistory()">
+        历史
+      </button>
+      <button class="settings-btn" @click="store.toggleTts()">
+        {{ store.ttsEnabled ? '🔊 播报开' : '🔇 播报关' }}
+      </button>
       <button class="settings-btn" @click="settings.togglePanel()">设置</button>
     </header>
     <main ref="canvasContainer" class="canvas-container"></main>
+    <HistoryPanel />
     <SettingsPanel />
     <AskPanel />
     <CaptionBar />
@@ -166,6 +188,11 @@ function toggleListen() {
   color: #a0a0b8;
   font-size: 13px;
   cursor: pointer;
+}
+
+.settings-btn.on {
+  border-color: #8be9fd;
+  color: #8be9fd;
 }
 
 .status {

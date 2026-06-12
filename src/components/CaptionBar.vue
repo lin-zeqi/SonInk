@@ -10,7 +10,9 @@ const store = useCommandStore()
       <span v-if="store.interim" class="interim">{{ store.interim }}</span>
       <span v-else-if="store.lastCommand" class="final">
         {{ store.lastCommand.text }}
-        <em class="source">{{ store.lastCommand.source === 'voice' ? '语音' : '调试' }}</em>
+        <em class="source">{{
+          { voice: '语音', debug: '调试', ui: '按钮' }[store.lastCommand.source]
+        }}</em>
       </span>
       <span v-else class="placeholder">说出指令，例如："画一个红色的圆"</span>
     </div>

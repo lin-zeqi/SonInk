@@ -63,8 +63,9 @@ await expect('删除红圆', (s) => s.nodes.length === 0)
 await send('撤销')
 await expect('撤销删除，红圆恢复', (s) => s.nodes.length === 1 && s.nodes[0].fill === '#e53935')
 
-await send('清空画布')
-await expect('清空', (s) => s.nodes.length === 0)
+await send('清空画布') // PR #11 起需要二次确认
+await send('确认')
+await expect('清空（经确认）', (s) => s.nodes.length === 0)
 
 await send('撤销')
 await expect('撤销清空', (s) => s.nodes.length === 1)

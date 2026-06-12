@@ -11,9 +11,14 @@ export const useAssistantStore = defineStore('assistant', {
   state: () => ({
     thinking: false,
     ask: '',
+    /** 破坏性操作（清空画布）的二次确认问题，非空时确认面板显示中 */
+    confirm: '',
     messages: [] as ChatMessage[],
   }),
   actions: {
+    setConfirm(question: string) {
+      this.confirm = question
+    },
     /** 开始一次慢路径调用；continuation=true 表示是追问的回答，沿用上下文 */
     begin(userText: string, continuation: boolean) {
       if (!continuation || this.messages.length === 0) {
