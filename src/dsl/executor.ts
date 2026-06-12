@@ -13,6 +13,7 @@ import { useHistoryStore } from '../store/history'
 import { useObjectsStore, type CanvasObject } from '../store/objects'
 import {
   DIRECTION_LABELS,
+  POSITION_FRACTIONS,
   POSITION_LABELS,
   SHAPE_LABELS,
   type DeleteCommand,
@@ -27,6 +28,7 @@ import {
   type SelectCommand,
   type SemanticPosition,
   type SemanticSize,
+  type StyleCommand,
   type TargetSpec,
 } from './types'
 
@@ -36,19 +38,6 @@ import {
  */
 
 const DEFAULT_COLOR = '#42a5f5'
-
-/** 九宫格 → 画布比例坐标 */
-const POSITION_FRACTIONS: Record<SemanticPosition, [number, number]> = {
-  'top-left': [0.2, 0.22],
-  top: [0.5, 0.22],
-  'top-right': [0.8, 0.22],
-  left: [0.2, 0.5],
-  center: [0.5, 0.5],
-  right: [0.8, 0.5],
-  'bottom-left': [0.2, 0.78],
-  bottom: [0.5, 0.78],
-  'bottom-right': [0.8, 0.78],
-}
 
 /** 语义大小 → 相对画布短边的比例（圆=半径，方/三角=外接半径） */
 const SIZE_FRACTIONS: Record<SemanticSize, number> = {
@@ -81,7 +70,7 @@ const MIN_RADIUS = 4
  * 带过渡动画地修改节点属性：高亮框先清除（避免动画期间停留在旧位置），
  * 动画结束后按选中态重绘。
  */
-function animateTo(node: Konva.Shape, attrs: Record<string, number>): void {
+function animateTo(node: Konva.Shape, attrs: Record<string, number | string>): void {
   getFeedbackLayer().destroyChildren()
   setPendingAttrs(node.id(), attrs)
   node.to({
@@ -124,10 +113,20 @@ function createNode(cmd: DrawCommand, id: string): Konva.Shape {
   const r = resolveSize(cmd.props?.size)
   const color = cmd.props?.color ?? DEFAULT_COLOR
 
-  // 填充图形同时带同色描边：渐进绘制动画沿描边逐笔画出轮廓
+  // 填充图形同时带同色描边：渐进绘制动画沿描边逐笔画出轮廓。
+  // draggable 随节点序列化进快照，撤销/重做恢复后仍可拖拽
   switch (cmd.shape) {
     case 'circle':
-      return new Konva.Circle({ id, x, y, radius: r, fill: color, stroke: color, strokeWidth: 3 })
+      return new Konva.Circle({
+        id,
+        x,
+        y,
+        radius: r,
+        fill: color,
+        stroke: color,
+        strokeWidth: 3,
+        draggable: true,
+      })
     case 'rect':
       return new Konva.Rect({
         id,
@@ -138,6 +137,7 @@ function createNode(cmd: DrawCommand, id: string): Konva.Shape {
         fill: color,
         stroke: color,
         strokeWidth: 3,
+        draggable: true,
       })
     case 'triangle':
       return new Konva.RegularPolygon({
@@ -149,6 +149,7 @@ function createNode(cmd: DrawCommand, id: string): Konva.Shape {
         fill: color,
         stroke: color,
         strokeWidth: 3,
+        draggable: true,
       })
     case 'line': {
       const { from, to } = cmd.props ?? {}
@@ -164,7 +165,24 @@ function createNode(cmd: DrawCommand, id: string): Konva.Shape {
         stroke: color,
         strokeWidth: 4,
         lineCap: 'round',
+        draggable: true,
       })
+    }
+    case 'text': {
+      const node = new Konva.Text({
+        id,
+        x,
+        y,
+        text: cmd.props?.text ?? '文本',
+        fontSize: r,
+        fontStyle: 'bold',
+        fill: cmd.props?.color ?? '#212121',
+        draggable: true,
+      })
+      // Konva.Text 以左上角定位，按测量结果居中到目标点
+      node.offsetX(node.width() / 2)
+      node.offsetY(node.height() / 2)
+      return node
     }
   }
 }
@@ -266,12 +284,12 @@ function execDraw(cmd: DrawCommand): ExecResult {
   const id = `obj-${nextId++}`
   const node = createNode(cmd, id)
   getMainLayer().add(node)
-  revealShape(node, cmd.shape === 'line' ? null : (cmd.props?.color ?? DEFAULT_COLOR))
-  useObjectsStore().register({
-    id,
-    shape: cmd.shape,
-    color: cmd.props?.color ?? DEFAULT_COLOR,
-  })
+  const color = cmd.props?.color ?? (cmd.shape === 'text' ? '#212121' : DEFAULT_COLOR)
+  revealShape(node, cmd.shape === 'line' ? null : color)
+  useObjectsStore().register({ id, shape: cmd.shape, color })
+  if (cmd.shape === 'text') {
+    return { ok: true, message: `已写上"${cmd.props?.text ?? ''}"` }
+  }
   return { ok: true, message: `已画一个${SHAPE_LABELS[cmd.shape]}` }
 }
 
@@ -380,6 +398,53 @@ function execResize(cmd: ResizeCommand): ExecResult {
   return { ok: false, message: '该对象不支持缩放' }
 }
 
+function execStyle(cmd: StyleCommand): ExecResult {
+  const matched = resolveTarget(cmd.target)
+  if (!matched.length) return { ok: false, message: '没有找到要改颜色的对象' }
+
+  const store = useObjectsStore()
+  for (const obj of matched) {
+    const node = findNode(obj.id)
+    if (!node) continue
+    // 直线/文字只有单一着色通道，填充图形描边同步换色
+    const attrs: Record<string, string> =
+      node instanceof Konva.Line
+        ? { stroke: cmd.color }
+        : node instanceof Konva.Text
+          ? { fill: cmd.color }
+          : { fill: cmd.color, stroke: cmd.color }
+    animateTo(node, attrs)
+    store.updateColor(obj.id, cmd.color)
+  }
+
+  if (matched.length === 1) return { ok: true, message: `已为${describe(matched[0])}换色` }
+  return { ok: true, message: `已为 ${matched.length} 个对象换色` }
+}
+
+function execExport(): ExecResult {
+  const stage = getMainLayer().getStage()
+  if (!stage) return { ok: false, message: '画布尚未就绪' }
+
+  // 选中高亮属于交互反馈，不进入导出图
+  const feedbackLayer = getFeedbackLayer()
+  const wasVisible = feedbackLayer.visible()
+  feedbackLayer.visible(false)
+  const url = stage.toDataURL({ pixelRatio: 2, mimeType: 'image/png' })
+  feedbackLayer.visible(wasVisible)
+
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `sonink-${Date.now()}.png`
+  a.click()
+
+  if (import.meta.env.DEV) {
+    const hook = (window as unknown as Record<string, Record<string, unknown> | undefined>)
+      .__sonink
+    if (hook) hook.lastExport = url
+  }
+  return { ok: true, message: '已导出图片' }
+}
+
 function execDelete(cmd: DeleteCommand): ExecResult {
   const matched = resolveTarget(cmd.target)
   if (!matched.length) return { ok: false, message: '没有找到要删除的对象' }
@@ -412,6 +477,8 @@ export function execute(cmd: DslCommand): ExecResult {
       return execMove(cmd)
     case 'resize':
       return execResize(cmd)
+    case 'style':
+      return execStyle(cmd)
     case 'delete':
       return execDelete(cmd)
     case 'clear':
@@ -420,6 +487,10 @@ export function execute(cmd: DslCommand): ExecResult {
       return useHistoryStore().undo()
     case 'redo':
       return useHistoryStore().redo()
+    case 'export':
+      return execExport()
+    case 'replay':
+      return useHistoryStore().replay()
   }
 }
 
@@ -429,6 +500,7 @@ function isMutating(cmd: DslCommand): boolean {
     cmd.action === 'draw' ||
     cmd.action === 'move' ||
     cmd.action === 'resize' ||
+    cmd.action === 'style' ||
     cmd.action === 'delete' ||
     cmd.action === 'clear'
   )

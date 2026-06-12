@@ -125,7 +125,8 @@ page2.on('request', (req) => {
 })
 await page2.goto('http://localhost:5173', { waitUntil: 'networkidle0' })
 await page2.waitForSelector('.debug-input input')
-await page2.type('.debug-input input', '画一个雪人')
+// 注意：雪人已被 PR #13 的语义模板本地接管，这里用未内置的语义对象走 LLM
+await page2.type('.debug-input input', '画一只小猫')
 await page2.keyboard.press('Enter')
 await new Promise((r) => setTimeout(r, 800))
 const state2 = await page2.evaluate(() => ({

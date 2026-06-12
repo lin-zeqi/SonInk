@@ -6,7 +6,7 @@
  * - 解析层禁止输出绝对坐标。
  */
 
-export type ShapeType = 'circle' | 'rect' | 'triangle' | 'line'
+export type ShapeType = 'circle' | 'rect' | 'triangle' | 'line' | 'text'
 
 export type SemanticSize = 'small' | 'medium' | 'large'
 
@@ -57,6 +57,8 @@ export interface DrawProps {
   /** 仅直线有效：起止点比例坐标，缺省时画水平线 */
   from?: PositionFraction
   to?: PositionFraction
+  /** 仅 shape=text 有效：标注内容 */
+  text?: string
 }
 
 export interface DrawCommand {
@@ -114,6 +116,23 @@ export interface ClearCommand {
   action: 'clear'
 }
 
+/** 修改已有对象颜色（"把这个圆变成蓝色"） */
+export interface StyleCommand {
+  action: 'style'
+  target?: TargetSpec
+  color: string
+}
+
+/** 导出画布为 PNG */
+export interface ExportCommand {
+  action: 'export'
+}
+
+/** 按时间顺序回放绘图过程（快照时间线） */
+export interface ReplayCommand {
+  action: 'replay'
+}
+
 /** 撤销上一次变更（复合指令作为一个事务整体撤销） */
 export interface UndoCommand {
   action: 'undo'
@@ -128,10 +147,13 @@ export type DslCommand =
   | SelectCommand
   | MoveCommand
   | ResizeCommand
+  | StyleCommand
   | DeleteCommand
   | ClearCommand
   | UndoCommand
   | RedoCommand
+  | ExportCommand
+  | ReplayCommand
 
 /** 执行结果，message 供 TTS 播报与字幕反馈 */
 export interface ExecResult {
@@ -139,7 +161,7 @@ export interface ExecResult {
   message: string
 }
 
-export const SHAPE_TYPES: readonly ShapeType[] = ['circle', 'rect', 'triangle', 'line']
+export const SHAPE_TYPES: readonly ShapeType[] = ['circle', 'rect', 'triangle', 'line', 'text']
 
 export const SEMANTIC_SIZES: readonly SemanticSize[] = ['small', 'medium', 'large']
 
@@ -169,6 +191,20 @@ export const SHAPE_LABELS: Record<ShapeType, string> = {
   rect: '矩形',
   triangle: '三角形',
   line: '直线',
+  text: '文字',
+}
+
+/** 九宫格 → 画布比例坐标（执行层换算与模板展开共用） */
+export const POSITION_FRACTIONS: Record<SemanticPosition, [number, number]> = {
+  'top-left': [0.2, 0.22],
+  top: [0.5, 0.22],
+  'top-right': [0.8, 0.22],
+  left: [0.2, 0.5],
+  center: [0.5, 0.5],
+  right: [0.8, 0.5],
+  'bottom-left': [0.2, 0.78],
+  bottom: [0.5, 0.78],
+  'bottom-right': [0.8, 0.78],
 }
 
 export const POSITION_LABELS: Record<SemanticPosition, string> = {

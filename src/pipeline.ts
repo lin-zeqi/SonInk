@@ -1,6 +1,7 @@
 import { watch } from 'vue'
 import { useCommandStore } from './store/command'
 import { useAssistantStore } from './store/assistant'
+import { useHistoryStore } from './store/history'
 import { useObjectsStore } from './store/objects'
 import { useSettingsStore } from './store/settings'
 import { validateDsl } from './dsl/schema'
@@ -93,6 +94,11 @@ async function runSlowPath(text: string, continuation: boolean): Promise<string>
 }
 
 async function handleText(text: string): Promise<string> {
+  // 回放是只读演示过程，期间不接收新指令
+  if (useHistoryStore().replaying) {
+    return '回放进行中，请稍候'
+  }
+
   // DSL JSON 直通（调试用）
   if (text.startsWith('{') || text.startsWith('[')) {
     let parsed: unknown

@@ -27,9 +27,9 @@ export interface Snapshot {
  * 会拿到中间值。执行引擎启动动画时登记终态属性，动画结束后清除；
  * 快照捕获时用终态覆盖中间值——几何终态在指令执行时即确定，动画纯视觉。
  */
-const pendingAttrs = new Map<string, Record<string, number>>()
+const pendingAttrs = new Map<string, Record<string, number | string>>()
 
-export function setPendingAttrs(id: string, attrs: Record<string, number>): void {
+export function setPendingAttrs(id: string, attrs: Record<string, number | string>): void {
   pendingAttrs.set(id, { ...(pendingAttrs.get(id) ?? {}), ...attrs })
 }
 

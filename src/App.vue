@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
 import { initStage } from './canvas/stage'
+import { setupDragHistory } from './canvas/drag-history'
 import { createRecognizer, isSpeechSupported, type Recognizer } from './speech/recognizer'
 import { onSpeakStateChange } from './speech/tts'
 import { useCommandStore } from './store/command'
@@ -39,6 +40,7 @@ function onKeydown(e: KeyboardEvent) {
 
 onMounted(() => {
   initStage(canvasContainer.value!)
+  setupDragHistory()
   setupPipeline()
   window.addEventListener('keydown', onKeydown)
 

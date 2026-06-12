@@ -45,6 +45,18 @@ function hexToRgba(hex: string, alpha: number): string {
  * @param fill 最终填充色；直线等无填充图形传 null
  */
 export function revealShape(node: Konva.Shape, fill: string | null): void {
+  // 文字没有可描边的轮廓，用透明度淡入
+  if (node instanceof Konva.Text) {
+    node.opacity(0)
+    new Konva.Tween({
+      node,
+      opacity: 1,
+      duration: OUTLINE_DURATION,
+      easing: Konva.Easings.EaseIn,
+    }).play()
+    return
+  }
+
   const length = outlineLength(node)
   if (length <= 0) return
 

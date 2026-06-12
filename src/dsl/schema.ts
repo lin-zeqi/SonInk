@@ -111,6 +111,13 @@ function validateProps(v: unknown): { ok: true; props: DrawProps } | { ok: false
     }
   }
 
+  if (v.text !== undefined) {
+    if (typeof v.text !== 'string' || !v.text.trim()) {
+      return { ok: false, error: '文本内容必须是非空字符串' }
+    }
+    props.text = v.text.trim()
+  }
+
   return { ok: true, props }
 }
 
@@ -152,6 +159,9 @@ function validateOne(v: unknown): { ok: true; command: DslCommand } | { ok: fals
       }
       const propsResult = validateProps(v.props)
       if (!propsResult.ok) return propsResult
+      if (v.shape === 'text' && propsResult.props.text === undefined) {
+        return { ok: false, error: '文字图形缺少 text 内容' }
+      }
       return {
         ok: true,
         command: { action: 'draw', shape: v.shape as never, props: propsResult.props },
@@ -228,12 +238,24 @@ function validateOne(v: unknown): { ok: true; command: DslCommand } | { ok: fals
       if (!t.ok) return t
       return { ok: true, command: { action: 'delete', target: t.target } }
     }
+    case 'style': {
+      const t = validateTarget(v.target)
+      if (!t.ok) return t
+      if (typeof v.color !== 'string' || !HEX_COLOR.test(v.color)) {
+        return { ok: false, error: `非法颜色值: ${String(v.color)}` }
+      }
+      return { ok: true, command: { action: 'style', target: t.target, color: v.color } }
+    }
     case 'clear':
       return { ok: true, command: { action: 'clear' } }
     case 'undo':
       return { ok: true, command: { action: 'undo' } }
     case 'redo':
       return { ok: true, command: { action: 'redo' } }
+    case 'export':
+      return { ok: true, command: { action: 'export' } }
+    case 'replay':
+      return { ok: true, command: { action: 'replay' } }
     default:
       return { ok: false, error: `不支持的操作: ${String(v.action)}` }
   }

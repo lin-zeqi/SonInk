@@ -31,6 +31,11 @@ export const useObjectsStore = defineStore('objects', {
     setSelection(ids: string[]) {
       this.selectedIds = ids
     },
+    /** 改色后同步语义特征，保证"删掉蓝色的圆"匹配新颜色 */
+    updateColor(id: string, color: string) {
+      const obj = this.objects.find((o) => o.id === id)
+      if (obj) obj.color = color
+    },
     clear() {
       this.objects = []
       this.selectedIds = []
