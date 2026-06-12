@@ -1,10 +1,14 @@
 import {
+  DIRECTIONS,
   SHAPE_TYPES,
   SEMANTIC_SIZES,
   SEMANTIC_POSITIONS,
   type DslCommand,
   type DrawProps,
+  type TargetSpec,
 } from './types'
+
+const HEX_COLOR = /^#[0-9a-fA-F]{3,8}$/
 
 /**
  * DSL 运行时校验。
@@ -27,7 +31,7 @@ function validateProps(v: unknown): { ok: true; props: DrawProps } | { ok: false
   const props: DrawProps = {}
 
   if (v.color !== undefined) {
-    if (typeof v.color !== 'string' || !/^#[0-9a-fA-F]{3,8}$/.test(v.color)) {
+    if (typeof v.color !== 'string' || !HEX_COLOR.test(v.color)) {
       return { ok: false, error: `非法颜色值: ${String(v.color)}` }
     }
     props.color = v.color
@@ -56,6 +60,34 @@ function validateProps(v: unknown): { ok: true; props: DrawProps } | { ok: false
   return { ok: true, props }
 }
 
+function validateTarget(
+  v: unknown
+): { ok: true; target: TargetSpec | undefined } | { ok: false; error: string } {
+  if (v === undefined) return { ok: true, target: undefined }
+  if (!isRecord(v)) return { ok: false, error: 'target 必须是对象' }
+
+  const target: TargetSpec = {}
+  if (v.ref !== undefined) {
+    if (v.ref !== 'last' && v.ref !== 'selected') {
+      return { ok: false, error: `非法指代: ${String(v.ref)}` }
+    }
+    target.ref = v.ref
+  }
+  if (v.shape !== undefined) {
+    if (!SHAPE_TYPES.includes(v.shape as never)) {
+      return { ok: false, error: `不支持的图形: ${String(v.shape)}` }
+    }
+    target.shape = v.shape as TargetSpec['shape']
+  }
+  if (v.color !== undefined) {
+    if (typeof v.color !== 'string' || !HEX_COLOR.test(v.color)) {
+      return { ok: false, error: `非法颜色值: ${String(v.color)}` }
+    }
+    target.color = v.color
+  }
+  return { ok: true, target }
+}
+
 function validateOne(v: unknown): { ok: true; command: DslCommand } | { ok: false; error: string } {
   if (!isRecord(v)) return { ok: false, error: '指令必须是对象' }
 
@@ -70,6 +102,54 @@ function validateOne(v: unknown): { ok: true; command: DslCommand } | { ok: fals
         ok: true,
         command: { action: 'draw', shape: v.shape as never, props: propsResult.props },
       }
+    }
+    case 'select': {
+      const t = validateTarget(v.target)
+      if (!t.ok) return t
+      return { ok: true, command: { action: 'select', target: t.target ?? {} } }
+    }
+    case 'move': {
+      const t = validateTarget(v.target)
+      if (!t.ok) return t
+
+      const hasDirection = v.direction !== undefined
+      const hasPosition = v.position !== undefined
+      if (!hasDirection && !hasPosition) {
+        return { ok: false, error: '移动指令缺少方向或目标位置' }
+      }
+      if (hasDirection && !DIRECTIONS.includes(v.direction as never)) {
+        return { ok: false, error: `非法方向: ${String(v.direction)}` }
+      }
+      if (hasPosition && !SEMANTIC_POSITIONS.includes(v.position as never)) {
+        return { ok: false, error: `非法位置: ${String(v.position)}` }
+      }
+
+      let distance: number | 'small' | 'medium' | 'large' | undefined
+      if (v.distance !== undefined) {
+        if (typeof v.distance === 'number' && Number.isFinite(v.distance) && v.distance > 0) {
+          distance = v.distance
+        } else if (v.distance === 'small' || v.distance === 'medium' || v.distance === 'large') {
+          distance = v.distance
+        } else {
+          return { ok: false, error: `非法步长: ${String(v.distance)}` }
+        }
+      }
+
+      return {
+        ok: true,
+        command: {
+          action: 'move',
+          target: t.target,
+          direction: hasDirection ? (v.direction as never) : undefined,
+          position: hasPosition ? (v.position as never) : undefined,
+          distance,
+        },
+      }
+    }
+    case 'delete': {
+      const t = validateTarget(v.target)
+      if (!t.ok) return t
+      return { ok: true, command: { action: 'delete', target: t.target } }
     }
     case 'clear':
       return { ok: true, command: { action: 'clear' } }

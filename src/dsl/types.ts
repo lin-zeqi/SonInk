@@ -37,11 +37,52 @@ export interface DrawCommand {
   props?: DrawProps
 }
 
+/**
+ * 对象目标描述（指代消解的输入）。
+ * P0 范围：ref 指代（"刚才那个"=last，"它/这个"=selected）与单特征匹配（颜色+图形）。
+ * 空 target 表示"当前选中，否则最近对象"。
+ */
+export interface TargetSpec {
+  ref?: 'last' | 'selected'
+  shape?: ShapeType
+  color?: string
+}
+
+export interface SelectCommand {
+  action: 'select'
+  target: TargetSpec
+}
+
+export type Direction = 'left' | 'right' | 'up' | 'down'
+
+/** 语义步长或绝对像素 */
+export type MoveDistance = 'small' | 'medium' | 'large' | number
+
+export interface MoveCommand {
+  action: 'move'
+  target?: TargetSpec
+  /** 相对移动：方向 + 步长 */
+  direction?: Direction
+  distance?: MoveDistance
+  /** 绝对移动：九宫格目标位置（与 direction 二选一） */
+  position?: SemanticPosition
+}
+
+export interface DeleteCommand {
+  action: 'delete'
+  target?: TargetSpec
+}
+
 export interface ClearCommand {
   action: 'clear'
 }
 
-export type DslCommand = DrawCommand | ClearCommand
+export type DslCommand =
+  | DrawCommand
+  | SelectCommand
+  | MoveCommand
+  | DeleteCommand
+  | ClearCommand
 
 /** 执行结果，message 供 TTS 播报与字幕反馈 */
 export interface ExecResult {
@@ -65,9 +106,30 @@ export const SEMANTIC_POSITIONS: readonly SemanticPosition[] = [
   'bottom-right',
 ]
 
+export const DIRECTIONS: readonly Direction[] = ['left', 'right', 'up', 'down']
+
 export const SHAPE_LABELS: Record<ShapeType, string> = {
   circle: '圆形',
   rect: '矩形',
   triangle: '三角形',
   line: '直线',
+}
+
+export const POSITION_LABELS: Record<SemanticPosition, string> = {
+  'top-left': '左上角',
+  top: '上方',
+  'top-right': '右上角',
+  left: '左边',
+  center: '中间',
+  right: '右边',
+  'bottom-left': '左下角',
+  bottom: '下方',
+  'bottom-right': '右下角',
+}
+
+export const DIRECTION_LABELS: Record<Direction, string> = {
+  left: '左',
+  right: '右',
+  up: '上',
+  down: '下',
 }
