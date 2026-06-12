@@ -2,7 +2,13 @@ import Konva from 'konva'
 import { getMainLayer, getFeedbackLayer, getCanvasSize } from '../canvas/stage'
 import { revealShape } from '../canvas/draw-animation'
 import { findNode, syncHighlight } from '../canvas/highlight'
-import { captureSnapshot, restoreSnapshot, snapshotChanged } from '../history/snapshot'
+import {
+  captureSnapshot,
+  clearPendingAttrs,
+  restoreSnapshot,
+  setPendingAttrs,
+  snapshotChanged,
+} from '../history/snapshot'
 import { useHistoryStore } from '../store/history'
 import { useObjectsStore, type CanvasObject } from '../store/objects'
 import {
@@ -16,6 +22,7 @@ import {
   type ExecResult,
   type MoveCommand,
   type PositionFraction,
+  type ResizeCommand,
   type SelectCommand,
   type SemanticPosition,
   type SemanticSize,
@@ -61,6 +68,30 @@ const DIRECTION_VECTORS: Record<Direction, [number, number]> = {
   right: [1, 0],
   up: [0, -1],
   down: [0, 1],
+}
+
+/** 移动/缩放的过渡动画时长（秒）——纯视觉，几何终态在指令执行时即确定 */
+const TRANSITION_DURATION = 0.35
+
+/** 缩放下限，避免对象缩到不可见 */
+const MIN_RADIUS = 4
+
+/**
+ * 带过渡动画地修改节点属性：高亮框先清除（避免动画期间停留在旧位置），
+ * 动画结束后按选中态重绘。
+ */
+function animateTo(node: Konva.Shape, attrs: Record<string, number>): void {
+  getFeedbackLayer().destroyChildren()
+  setPendingAttrs(node.id(), attrs)
+  node.to({
+    ...attrs,
+    duration: TRANSITION_DURATION,
+    easing: Konva.Easings.EaseInOut,
+    onFinish: () => {
+      clearPendingAttrs(node.id())
+      syncHighlight()
+    },
+  })
 }
 
 let nextId = 1
@@ -220,11 +251,10 @@ function execMove(cmd: MoveCommand): ExecResult {
   if (cmd.position) {
     const [fx, fy] = POSITION_FRACTIONS[cmd.position]
     const box = node.getClientRect()
-    node.move({
-      x: width * fx - (box.x + box.width / 2),
-      y: height * fy - (box.y + box.height / 2),
+    animateTo(node, {
+      x: node.x() + (width * fx - (box.x + box.width / 2)),
+      y: node.y() + (height * fy - (box.y + box.height / 2)),
     })
-    syncHighlight()
     return { ok: true, message: `已移动到${POSITION_LABELS[cmd.position]}` }
   }
 
@@ -234,9 +264,67 @@ function execMove(cmd: MoveCommand): ExecResult {
       ? cmd.distance
       : Math.min(width, height) * MOVE_FRACTIONS[cmd.distance ?? 'medium']
   const [vx, vy] = DIRECTION_VECTORS[direction]
-  node.move({ x: vx * distance, y: vy * distance })
-  syncHighlight()
+  animateTo(node, { x: node.x() + vx * distance, y: node.y() + vy * distance })
   return { ok: true, message: `已向${DIRECTION_LABELS[direction]}移动` }
+}
+
+function execResize(cmd: ResizeCommand): ExecResult {
+  const matched = resolveTarget(cmd.target)
+  if (!matched.length) return { ok: false, message: '画布上没有可缩放的对象' }
+  if (matched.length > 1) {
+    return { ok: false, message: '匹配到多个对象，请先选中要缩放的那一个' }
+  }
+
+  const node = findNode(matched[0].id)
+  if (!node) return { ok: false, message: '对象状态异常，请重试' }
+
+  const doneMessage =
+    cmd.size !== undefined ? '已调整大小' : (cmd.scale ?? 1) > 1 ? '已放大' : '已缩小'
+
+  if (node instanceof Konva.Circle || node instanceof Konva.RegularPolygon) {
+    const r = node.radius()
+    const target = Math.max(cmd.size ?? r * (cmd.scale ?? 1), MIN_RADIUS)
+    animateTo(node, { radius: target })
+    return { ok: true, message: doneMessage }
+  }
+
+  if (node instanceof Konva.Rect) {
+    const w = node.width()
+    const factor = cmd.size !== undefined ? (cmd.size * 2) / w : (cmd.scale ?? 1)
+    const newW = Math.max(w * factor, MIN_RADIUS * 2)
+    const newH = Math.max(node.height() * factor, MIN_RADIUS * 2)
+    // 保持中心不动：宽高变化的一半反向补偿到左上角
+    animateTo(node, {
+      x: node.x() - (newW - w) / 2,
+      y: node.y() - (newH - node.height()) / 2,
+      width: newW,
+      height: newH,
+    })
+    return { ok: true, message: doneMessage }
+  }
+
+  if (node instanceof Konva.Line) {
+    if (cmd.size !== undefined) {
+      return { ok: false, message: '直线请用倍数缩放，比如"放大一倍"' }
+    }
+    // 首次缩放时把变换原点移到线段包围盒中心（位置补偿，视觉不变），
+    // 之后通过 scale 缩放，points 始终保持创建时的原始值
+    if (!node.offsetX() && !node.offsetY()) {
+      const box = node.getSelfRect()
+      const cx = box.x + box.width / 2
+      const cy = box.y + box.height / 2
+      node.offset({ x: cx, y: cy })
+      node.move({ x: cx, y: cy })
+    }
+    const factor = cmd.scale ?? 1
+    animateTo(node, {
+      scaleX: (node.scaleX() || 1) * factor,
+      scaleY: (node.scaleY() || 1) * factor,
+    })
+    return { ok: true, message: doneMessage }
+  }
+
+  return { ok: false, message: '该对象不支持缩放' }
 }
 
 function execDelete(cmd: DeleteCommand): ExecResult {
@@ -269,6 +357,8 @@ export function execute(cmd: DslCommand): ExecResult {
       return execSelect(cmd)
     case 'move':
       return execMove(cmd)
+    case 'resize':
+      return execResize(cmd)
     case 'delete':
       return execDelete(cmd)
     case 'clear':
@@ -282,7 +372,13 @@ export function execute(cmd: DslCommand): ExecResult {
 
 /** 改变画布状态、需要进入撤销历史的指令（select 只改高亮，undo/redo 自身操作历史） */
 function isMutating(cmd: DslCommand): boolean {
-  return cmd.action === 'draw' || cmd.action === 'move' || cmd.action === 'delete' || cmd.action === 'clear'
+  return (
+    cmd.action === 'draw' ||
+    cmd.action === 'move' ||
+    cmd.action === 'resize' ||
+    cmd.action === 'delete' ||
+    cmd.action === 'clear'
+  )
 }
 
 /**
