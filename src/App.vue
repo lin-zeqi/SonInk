@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { initStage } from './canvas/stage'
 import { createRecognizer, isSpeechSupported, type Recognizer } from './speech/recognizer'
 import { useCommandStore } from './store/command'
+import { useHistoryStore } from './store/history'
 import { useSettingsStore } from './store/settings'
 import { setupPipeline } from './pipeline'
 import CaptionBar from './components/CaptionBar.vue'
@@ -12,12 +13,32 @@ import SettingsPanel from './components/SettingsPanel.vue'
 
 const canvasContainer = ref<HTMLDivElement | null>(null)
 const store = useCommandStore()
+const history = useHistoryStore()
 const settings = useSettingsStore()
 let recognizer: Recognizer | null = null
+
+// 快捷键与语音同管道：提交"撤销/重做"文本，反馈、TTS 等行为完全一致
+function onKeydown(e: KeyboardEvent) {
+  if (!(e.ctrlKey || e.metaKey)) return
+  const target = e.target as HTMLElement | null
+  if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
+  const key = e.key.toLowerCase()
+  if (key === 'z' && e.shiftKey) {
+    e.preventDefault()
+    store.submit('重做', 'ui')
+  } else if (key === 'z') {
+    e.preventDefault()
+    store.submit('撤销', 'ui')
+  } else if (key === 'y') {
+    e.preventDefault()
+    store.submit('重做', 'ui')
+  }
+}
 
 onMounted(() => {
   initStage(canvasContainer.value!)
   setupPipeline()
+  window.addEventListener('keydown', onKeydown)
 
   store.speechSupported = isSpeechSupported()
   if (store.speechSupported) {
@@ -28,6 +49,10 @@ onMounted(() => {
       onError: (err) => console.warn('[speech]', err),
     })
   }
+})
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', onKeydown)
 })
 
 // 麦克风权限需要用户手势触发，因此保留这一个点击入口；
@@ -52,6 +77,22 @@ function toggleListen() {
         {{ store.listenState === 'listening' ? '● 聆听中（点击停止）' : '○ 开始聆听' }}
       </button>
       <span v-else class="status warn">当前浏览器不支持语音识别，请使用 Edge，或用右下角调试输入</span>
+      <button
+        class="history-btn push-right"
+        :disabled="!history.canUndo"
+        title="Ctrl+Z"
+        @click="store.submit('撤销', 'ui')"
+      >
+        ↩ 撤销
+      </button>
+      <button
+        class="history-btn"
+        :disabled="!history.canRedo"
+        title="Ctrl+Y"
+        @click="store.submit('重做', 'ui')"
+      >
+        ↪ 重做
+      </button>
       <button class="settings-btn" @click="settings.togglePanel()">设置</button>
     </header>
     <main ref="canvasContainer" class="canvas-container"></main>
@@ -98,8 +139,26 @@ function toggleListen() {
   color: #50fa7b;
 }
 
-.settings-btn {
+.history-btn {
+  padding: 6px 12px;
+  border: 1px solid #555;
+  border-radius: 16px;
+  background: transparent;
+  color: #a0a0b8;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.push-right {
   margin-left: auto;
+}
+
+.history-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.settings-btn {
   padding: 6px 14px;
   border: 1px solid #555;
   border-radius: 16px;

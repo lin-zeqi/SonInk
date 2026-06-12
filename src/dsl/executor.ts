@@ -1,6 +1,9 @@
 import Konva from 'konva'
 import { getMainLayer, getFeedbackLayer, getCanvasSize } from '../canvas/stage'
 import { revealShape } from '../canvas/draw-animation'
+import { findNode, syncHighlight } from '../canvas/highlight'
+import { captureSnapshot, restoreSnapshot, snapshotChanged } from '../history/snapshot'
+import { useHistoryStore } from '../store/history'
 import { useObjectsStore, type CanvasObject } from '../store/objects'
 import {
   DIRECTION_LABELS,
@@ -131,33 +134,6 @@ function createNode(cmd: DrawCommand, id: string): Konva.Shape {
         lineCap: 'round',
       })
     }
-  }
-}
-
-function findNode(id: string): Konva.Shape | null {
-  return (getMainLayer().findOne(`#${id}`) as Konva.Shape | undefined) ?? null
-}
-
-/** 按选中集合重绘高亮框（反馈层，不进入对象登记表） */
-function syncHighlight(): void {
-  const layer = getFeedbackLayer()
-  layer.destroyChildren()
-  const store = useObjectsStore()
-  for (const id of store.selectedIds) {
-    const node = findNode(id)
-    if (!node) continue
-    const box = node.getClientRect()
-    layer.add(
-      new Konva.Rect({
-        x: box.x - 4,
-        y: box.y - 4,
-        width: box.width + 8,
-        height: box.height + 8,
-        stroke: '#ff9800',
-        strokeWidth: 2,
-        dash: [6, 4],
-      })
-    )
   }
 }
 
@@ -297,16 +273,41 @@ export function execute(cmd: DslCommand): ExecResult {
       return execDelete(cmd)
     case 'clear':
       return execClear()
+    case 'undo':
+      return useHistoryStore().undo()
+    case 'redo':
+      return useHistoryStore().redo()
   }
 }
 
-/** 顺序执行指令序列（复合指令拆解结果），返回合并反馈 */
+/** 改变画布状态、需要进入撤销历史的指令（select 只改高亮，undo/redo 自身操作历史） */
+function isMutating(cmd: DslCommand): boolean {
+  return cmd.action === 'draw' || cmd.action === 'move' || cmd.action === 'delete' || cmd.action === 'clear'
+}
+
+/**
+ * 顺序执行指令序列（复合指令拆解结果），返回合并反馈。
+ *
+ * 整个序列是一个撤销事务：执行前抓取快照，全部成功且状态有变则提交历史
+ * （复合指令一次"撤销"整体回退）；中途失败则恢复快照，已执行的部分回滚，
+ * 画布不会停在半完成状态。
+ */
 export function executeAll(commands: DslCommand[]): ExecResult {
+  const before = commands.some(isMutating) ? captureSnapshot() : null
+
   const messages: string[] = []
   for (const cmd of commands) {
     const result = execute(cmd)
-    if (!result.ok) return result
+    if (!result.ok) {
+      if (before && messages.length > 0) {
+        restoreSnapshot(before)
+        return { ok: false, message: `${result.message}（复合指令已整体回滚）` }
+      }
+      return result
+    }
     messages.push(result.message)
   }
+
+  if (before && snapshotChanged(before)) useHistoryStore().commit(before)
   return { ok: true, message: messages.join('，') }
 }

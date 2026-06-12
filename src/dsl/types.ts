@@ -90,12 +90,23 @@ export interface ClearCommand {
   action: 'clear'
 }
 
+/** 撤销上一次变更（复合指令作为一个事务整体撤销） */
+export interface UndoCommand {
+  action: 'undo'
+}
+
+export interface RedoCommand {
+  action: 'redo'
+}
+
 export type DslCommand =
   | DrawCommand
   | SelectCommand
   | MoveCommand
   | DeleteCommand
   | ClearCommand
+  | UndoCommand
+  | RedoCommand
 
 /** 执行结果，message 供 TTS 播报与字幕反馈 */
 export interface ExecResult {

@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import type { ListenState } from '../speech/recognizer'
 
-export type CommandSource = 'voice' | 'debug'
+export type CommandSource = 'voice' | 'debug' | 'ui'
 
 export interface CommandEntry {
   id: number

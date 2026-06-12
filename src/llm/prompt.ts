@@ -23,7 +23,8 @@ props 可用字段：
 
 其他指令：
 {"action":"select","target":{...}} 选中；{"action":"move",...} 移动；
-{"action":"delete","target":{...}} 删除；{"action":"clear"} 清空。
+{"action":"delete","target":{...}} 删除；{"action":"clear"} 清空；
+{"action":"undo"} 撤销上一次操作；{"action":"redo"} 重做。
 target 字段：ref("last"=刚画的|"selected"=当前选中)、shape、color。
 
 ## 拆解组合图形的要领

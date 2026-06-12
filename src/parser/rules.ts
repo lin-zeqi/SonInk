@@ -21,6 +21,11 @@ const MISS: ParseResult = { matched: false }
 
 const CLEAR_PATTERN = /清空|清除|全部删除|重新开始|擦掉所有/
 
+/** 重做先于撤销判定："取消撤销"包含"撤销" */
+const REDO_PATTERN = /重做|取消撤销|恢复/
+
+const UNDO_PATTERN = /撤销|撤回|回退|退回|上一步|悔棋/
+
 const DRAW_VERB_PATTERN = /画|绘|来|加|添|整|生成|创建/
 
 const DELETE_PATTERN = /删掉|删除|去掉|移除|擦掉|删/
@@ -160,6 +165,14 @@ function parseMove(text: string): ParseResult {
 function parseSingle(raw: string): ParseResult {
   const text = normalize(raw)
   if (!text) return MISS
+
+  if (REDO_PATTERN.test(text)) {
+    return { matched: true, commands: [{ action: 'redo' }] }
+  }
+
+  if (UNDO_PATTERN.test(text)) {
+    return { matched: true, commands: [{ action: 'undo' }] }
+  }
 
   if (CLEAR_PATTERN.test(text)) {
     return { matched: true, commands: [{ action: 'clear' }] }
