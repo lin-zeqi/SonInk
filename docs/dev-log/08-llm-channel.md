@@ -44,6 +44,17 @@ node scripts/e2e-llm.mjs   # 前置 npm run dev，不需要真实 Key
 
 `npm run build` 通过；26 个解析冒烟用例不受影响。
 
+## 追加：多服务商可选（同分支第二次提交）
+
+设置面板从"单一 DeepSeek Key"升级为**服务商可选**：
+
+- 预置 DeepSeek / Kimi（月之暗面）/ 智谱 GLM / 通义千问，外加"自定义"
+  （任意 OpenAI 兼容端点 + 模型名）——国产大模型基本都兼容 OpenAI
+  chat/completions 协议，客户端只需要 baseUrl/model/key 三元组；
+- 各服务商 Key 分开保存、切换不丢；模型名可覆盖预设默认值；
+- 旧版单一 DeepSeek Key 自动迁移到新配置结构；
+- e2e 增加场景二：配置切到 Kimi 后请求正确路由到 api.moonshot.cn（mock 验证通过）。
+
 ## 遗留事项
 
 - [ ] 真实 DeepSeek Key 实测（需要用户的 Key；mock 已验证管道，剩余风险在

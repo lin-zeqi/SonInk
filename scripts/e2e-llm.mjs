@@ -81,5 +81,58 @@ await new Promise((r) => setTimeout(r, 800))
 await dump('回答追问后（应画出 1 圆 + 4 线的火柴人）')
 
 await page.screenshot({ path: 'scripts/e2e-llm.png' })
-await browser.close()
 console.log(`\nLLM 共调用 ${llmCalls} 次（预期 2）；截图 scripts/e2e-llm.png`)
+
+// —— 场景二：切换服务商（Kimi）验证多服务商路由 ——
+const page2 = await browser.newPage()
+await page2.evaluateOnNewDocument(() =>
+  localStorage.setItem(
+    'sonink.settings',
+    JSON.stringify({ provider: 'moonshot', keys: { moonshot: 'sk-e2e-mock' }, models: {}, customBaseUrl: '' })
+  )
+)
+await page2.setRequestInterception(true)
+let moonshotCalls = 0
+page2.on('request', (req) => {
+  if (req.url().includes('api.moonshot.cn')) {
+    if (req.method() === 'OPTIONS') {
+      req.respond({ status: 204, headers: CORS_HEADERS })
+      return
+    }
+    moonshotCalls++
+    req.respond({
+      status: 200,
+      headers: CORS_HEADERS,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                commands: [
+                  { action: 'draw', shape: 'circle', props: { color: '#90caf9', size: 40, position: { fx: 0.5, fy: 0.6 } } },
+                  { action: 'draw', shape: 'circle', props: { color: '#90caf9', size: 25, position: { fx: 0.5, fy: 0.38 } } },
+                ],
+              }),
+            },
+          },
+        ],
+      }),
+    })
+    return
+  }
+  req.continue()
+})
+await page2.goto('http://localhost:5173', { waitUntil: 'networkidle0' })
+await page2.waitForSelector('.debug-input input')
+await page2.type('.debug-input input', '画一个雪人')
+await page2.keyboard.press('Enter')
+await new Promise((r) => setTimeout(r, 800))
+const state2 = await page2.evaluate(() => ({
+  feedback: document.querySelector('.feedback')?.textContent ?? '(无)',
+  nodes: window.__sonink.mainLayer.getChildren().length,
+}))
+console.log(`\n=== 场景二：服务商切到 Kimi ===`)
+console.log(`moonshot 端点调用 ${moonshotCalls} 次（预期 1），反馈: ${state2.feedback}，节点数: ${state2.nodes}`)
+
+await browser.close()

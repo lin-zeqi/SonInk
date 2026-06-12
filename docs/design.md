@@ -319,7 +319,7 @@ Web Speech API 是全项目的地基，但其可用性受 **Edge 版本差异、
 |---|---|---|
 | Vue 3 / Vite / Pinia | 前端框架与构建 | MIT |
 | Konva.js | 画布渲染与对象管理 | MIT |
-| DeepSeek API | 复合指令拆解（在线服务，非代码依赖） | 商业 API |
+| 大模型 API（DeepSeek / Kimi / 智谱 GLM / 通义千问 / 自定义 OpenAI 兼容端点，用户在设置中选择） | 复合指令拆解（在线服务，非代码依赖） | 商业 API |
 | puppeteer-core | 端到端验证脚本（仅开发依赖，驱动本机 Edge） | Apache-2.0 |
 
 指令解析引擎（规则/槽位/容错）、绘图 DSL、执行引擎、语音交互逻辑均为本项目原创实现。

@@ -51,8 +51,9 @@ function applyLlmReply(reply: string): string {
 
 async function runSlowPath(text: string, continuation: boolean): Promise<string> {
   const settings = useSettingsStore()
-  if (!settings.apiKey) {
-    return '这条指令需要 AI 帮忙拆解，请先点击右上角"设置"填入 DeepSeek API Key'
+  const cfg = settings.activeConfig
+  if (!cfg.ready) {
+    return '这条指令需要 AI 帮忙拆解，请先点击右上角"设置"选择大模型服务商并填入 API Key'
   }
 
   const assistant = useAssistantStore()
@@ -61,7 +62,7 @@ async function runSlowPath(text: string, continuation: boolean): Promise<string>
   command.setFeedback('AI 思考中…')
 
   try {
-    const reply = await chat(assistant.messages, settings.apiKey)
+    const reply = await chat(assistant.messages, cfg)
     return applyLlmReply(reply)
   } catch (err) {
     assistant.reset()
