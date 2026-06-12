@@ -19,6 +19,7 @@ props 可用字段：
 - color: 十六进制颜色，如 "#e53935"
 - size: "small"|"medium"|"large"，或数字（圆=半径像素，方/三角=外接圆半径）
 - position: 九宫格语义位置（"top-left"|"top"|"top-right"|"left"|"center"|"right"|"bottom-left"|"bottom"|"bottom-right"），或画布比例坐标 {"fx":0~1,"fy":0~1}（fx 横向，fy 纵向，原点在左上角）
+- relativeTo: 相对画布上已有对象定位，如 {"shape":"circle","color":"#e53935","relation":"right-of"}（relation: left-of|right-of|above|below；shape/color 至少其一），优先级高于 position
 - from / to: 仅 shape=line 可用，起止点比例坐标，用于画任意方向的线段
 
 其他指令：

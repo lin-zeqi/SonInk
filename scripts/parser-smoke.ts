@@ -2,7 +2,7 @@
  * 规则解析引擎冒烟测试：node 环境直接跑，不依赖浏览器。
  * 用法：npx tsx scripts/parser-smoke.ts
  */
-import { parseCommand } from '../src/parser/rules'
+import { isShapeMissing, parseCommand } from '../src/parser/rules'
 
 const cases: Array<[string, string]> = [
   ['画一个圆', '基础'],
@@ -32,6 +32,12 @@ const cases: Array<[string, string]> = [
   ['画一个圆，然后在右下角画一个红色的方块', '"然后"拆分'],
   ['清空画布然后画一个三角形', '清空+绘制'],
   ['生成一个绿色的圆', '生成动词'],
+  // —— 容错强化（PR #12）——
+  ['搞个三角形', '口语动词-搞'],
+  ['弄一个紫色的球', '口语动词-弄+球'],
+  ['在圆的右边画一个方形', '相对定位'],
+  ['在红色的圆左边画个蓝色三角', '带颜色锚点的相对定位'],
+  ['在方块上面加一条线', '相对定位-上方'],
   // —— 缩放（PR #10）——
   ['把它放大', '代词缩放'],
   ['放大一倍', '倍数'],
@@ -54,4 +60,19 @@ for (const [input, label] of cases) {
   const result = parseCommand(input)
   const output = result.matched ? JSON.stringify(result.commands) : 'MISS'
   console.log(`[${label}] "${input}"\n  -> ${output}`)
+}
+
+// 缺图形追问判定（PR #12）：true=应追问，false=交给 LLM 或正常解析
+const clarifyCases: Array<[string, boolean]> = [
+  ['画一个', true],
+  ['画那个那个那个', true],
+  ['帮我画个东西', true],
+  ['画一个人', false], // 有语义内容，应交给 LLM
+  ['画一个圆', false], // 正常命中
+  ['今天天气不错', false],
+]
+console.log('\n—— isShapeMissing ——')
+for (const [input, expected] of clarifyCases) {
+  const actual = isShapeMissing(input)
+  console.log(`${actual === expected ? 'OK ' : 'FAIL'} "${input}" -> ${actual}（预期 ${expected}）`)
 }

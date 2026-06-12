@@ -1,11 +1,13 @@
 import {
   DIRECTIONS,
+  RELATIVE_RELATIONS,
   SHAPE_TYPES,
   SEMANTIC_SIZES,
   SEMANTIC_POSITIONS,
   type DslCommand,
   type DrawProps,
   type PositionFraction,
+  type RelativeTo,
   type TargetSpec,
 } from './types'
 
@@ -74,6 +76,30 @@ function validateProps(v: unknown): { ok: true; props: DrawProps } | { ok: false
     } else {
       return { ok: false, error: '非法位置：需为九宫格语义值或 0~1 比例坐标 {fx, fy}' }
     }
+  }
+
+  if (v.relativeTo !== undefined) {
+    const r = v.relativeTo as Record<string, unknown>
+    if (!isRecord(r) || !RELATIVE_RELATIONS.includes(r.relation as never)) {
+      return { ok: false, error: '非法相对定位：relation 需为 left-of/right-of/above/below' }
+    }
+    const relativeTo: RelativeTo = { relation: r.relation as RelativeTo['relation'] }
+    if (r.shape !== undefined) {
+      if (!SHAPE_TYPES.includes(r.shape as never)) {
+        return { ok: false, error: `非法锚点图形: ${String(r.shape)}` }
+      }
+      relativeTo.shape = r.shape as RelativeTo['shape']
+    }
+    if (r.color !== undefined) {
+      if (typeof r.color !== 'string' || !HEX_COLOR.test(r.color)) {
+        return { ok: false, error: `非法锚点颜色: ${String(r.color)}` }
+      }
+      relativeTo.color = r.color
+    }
+    if (relativeTo.shape === undefined && relativeTo.color === undefined) {
+      return { ok: false, error: '相对定位缺少锚点特征（shape 或 color）' }
+    }
+    props.relativeTo = relativeTo
   }
 
   for (const key of ['from', 'to'] as const) {

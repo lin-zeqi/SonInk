@@ -26,6 +26,14 @@ function answer(text: string) {
       </div>
     </div>
   </div>
+  <div v-else-if="assistant.clarify" class="ask-overlay">
+    <div class="ask-panel">
+      <div class="ask-title">想确认一下</div>
+      <div class="ask-question clarify-question">{{ assistant.clarify }}</div>
+      <div class="ask-hint">直接说出（或在调试框输入）图形名称；说"取消"放弃</div>
+      <button class="ask-cancel" @click="answer('取消')">取消</button>
+    </div>
+  </div>
   <div v-else-if="assistant.ask" class="ask-overlay">
     <div class="ask-panel">
       <div class="ask-title">AI 想确认一下</div>

@@ -6,7 +6,7 @@ import { useSettingsStore } from './store/settings'
 import { validateDsl } from './dsl/schema'
 import { executeAll } from './dsl/executor'
 import type { DslCommand } from './dsl/types'
-import { parseCommand } from './parser/rules'
+import { isShapeMissing, parseCommand } from './parser/rules'
 import { chat } from './llm/client'
 import { speak } from './speech/tts'
 
@@ -122,6 +122,19 @@ async function handleText(text: string): Promise<string> {
     // 落到下方按普通指令处理
   }
 
+  // 图形追问等待中：回答补上绘制动词重新解析（"红色的圆"→"画红色的圆"）
+  if (assistant.clarify) {
+    assistant.setClarify('')
+    if (CANCEL_PATTERN.test(text)) {
+      return '好的，已取消'
+    }
+    const completed = parseCommand(`画${text}`)
+    if (completed.matched) {
+      return runCommands(completed.commands)
+    }
+    // 不是图形回答：按普通指令继续
+  }
+
   // 追问等待中：本次输入是对 AI 问题的回答（取消词除外）
   if (assistant.ask) {
     if (CANCEL_PATTERN.test(text)) {
@@ -134,6 +147,12 @@ async function handleText(text: string): Promise<string> {
   const ruleResult = parseCommand(text)
   if (ruleResult.matched) {
     return runCommands(ruleResult.commands)
+  }
+
+  // 想画但说不出图形：规则级追问，不浪费 LLM 调用（无 Key 也可用）
+  if (isShapeMissing(text)) {
+    assistant.setClarify('想画什么图形呢？比如圆形、方形、三角形或直线')
+    return '请补充想画的图形（见提问框）'
   }
 
   return runSlowPath(text, false)
@@ -151,7 +170,7 @@ export function setupPipeline(): void {
         if (store.ttsEnabled) {
           // 追问/确认时播报问题本身，比"见提示框"对纯语音交互更有用
           const assistant = useAssistantStore()
-          speak(assistant.ask || assistant.confirm || msg)
+          speak(assistant.ask || assistant.confirm || assistant.clarify || msg)
         }
       })
     }
