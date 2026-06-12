@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import Konva from 'konva'
-import { initStage, getMainLayer } from './canvas/stage'
+import { initStage } from './canvas/stage'
 import { createRecognizer, isSpeechSupported, type Recognizer } from './speech/recognizer'
 import { useCommandStore } from './store/command'
+import { setupPipeline } from './pipeline'
 import CaptionBar from './components/CaptionBar.vue'
 import DebugInput from './components/DebugInput.vue'
 
@@ -13,16 +13,7 @@ let recognizer: Recognizer | null = null
 
 onMounted(() => {
   initStage(canvasContainer.value!)
-
-  // 临时验证图形：确认 Konva 渲染链路可用，PR #3 接入执行引擎后移除
-  getMainLayer().add(
-    new Konva.Circle({
-      x: 200,
-      y: 200,
-      radius: 60,
-      fill: '#e53935',
-    })
-  )
+  setupPipeline()
 
   store.speechSupported = isSpeechSupported()
   if (store.speechSupported) {

@@ -17,6 +17,8 @@ export const useCommandStore = defineStore('command', {
   state: () => ({
     /** 流式识别的中间文本 */
     interim: '',
+    /** 最近一次执行结果反馈（后续 PR 同时接 TTS 播报） */
+    feedback: '',
     history: [] as CommandEntry[],
     listenState: 'idle' as ListenState,
     speechSupported: true,
@@ -24,6 +26,9 @@ export const useCommandStore = defineStore('command', {
   actions: {
     setInterim(text: string) {
       this.interim = text
+    },
+    setFeedback(text: string) {
+      this.feedback = text
     },
     submit(text: string, source: CommandSource) {
       const t = text.trim()
