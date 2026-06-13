@@ -12,6 +12,12 @@ export interface CanvasObject {
   color: string
   /** 创建序号，"刚才那个"按此倒序解析 */
   seq: number
+  /** 所属组合 ID（同组图形可整体操作） */
+  groupId?: string
+  /** 组合对象名（如"人"、"房子"） */
+  groupName?: string
+  /** 部件角色（如"头"、"屋顶"） */
+  part?: string
 }
 
 export const useObjectsStore = defineStore('objects', {

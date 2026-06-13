@@ -6,6 +6,7 @@ import {
   SEMANTIC_POSITIONS,
   type DslCommand,
   type DrawProps,
+  type PathPoint,
   type PositionFraction,
   type RelativeTo,
   type TargetSpec,
@@ -96,8 +97,14 @@ function validateProps(v: unknown): { ok: true; props: DrawProps } | { ok: false
       }
       relativeTo.color = r.color
     }
-    if (relativeTo.shape === undefined && relativeTo.color === undefined) {
-      return { ok: false, error: '相对定位缺少锚点特征（shape 或 color）' }
+    if (r.groupName !== undefined) {
+      if (typeof r.groupName !== 'string' || !r.groupName.trim()) {
+        return { ok: false, error: '非法锚点 groupName' }
+      }
+      relativeTo.groupName = r.groupName.trim()
+    }
+    if (relativeTo.shape === undefined && relativeTo.color === undefined && relativeTo.groupName === undefined) {
+      return { ok: false, error: '相对定位缺少锚点特征（shape/color/groupName）' }
     }
     props.relativeTo = relativeTo
   }
@@ -116,6 +123,45 @@ function validateProps(v: unknown): { ok: true; props: DrawProps } | { ok: false
       return { ok: false, error: '文本内容必须是非空字符串' }
     }
     props.text = v.text.trim()
+  }
+
+  if (v.groupName !== undefined) {
+    if (typeof v.groupName !== 'string' || !v.groupName.trim()) {
+      return { ok: false, error: 'groupName 必须是非空字符串' }
+    }
+    props.groupName = v.groupName.trim()
+  }
+
+  if (v.part !== undefined) {
+    if (typeof v.part !== 'string' || !v.part.trim()) {
+      return { ok: false, error: 'part 必须是非空字符串' }
+    }
+    props.part = v.part.trim()
+  }
+
+  if (v.points !== undefined) {
+    if (!Array.isArray(v.points) || v.points.length < 2) {
+      return { ok: false, error: '路径 points 需要至少 2 个坐标点' }
+    }
+    const pts: PathPoint[] = []
+    for (const p of v.points) {
+      if (!isFraction(p)) {
+        return { ok: false, error: `非法坐标点: ${JSON.stringify(p)}` }
+      }
+      pts.push({ fx: (p as PositionFraction).fx, fy: (p as PositionFraction).fy })
+    }
+    props.points = pts
+  }
+
+  if (v.fill !== undefined) {
+    if (typeof v.fill !== 'string' || !HEX_COLOR.test(v.fill)) {
+      return { ok: false, error: `非法填充色: ${String(v.fill)}` }
+    }
+    props.fill = v.fill
+  }
+
+  if (v.close !== undefined) {
+    props.close = Boolean(v.close)
   }
 
   return { ok: true, props }
@@ -146,6 +192,18 @@ function validateTarget(
     }
     target.color = v.color
   }
+  if (v.groupName !== undefined) {
+    if (typeof v.groupName !== 'string' || !v.groupName.trim()) {
+      return { ok: false, error: 'groupName 必须是非空字符串' }
+    }
+    target.groupName = v.groupName.trim()
+  }
+  if (v.part !== undefined) {
+    if (typeof v.part !== 'string' || !v.part.trim()) {
+      return { ok: false, error: 'part 必须是非空字符串' }
+    }
+    target.part = v.part.trim()
+  }
   return { ok: true, target }
 }
 
@@ -162,6 +220,9 @@ function validateOne(v: unknown): { ok: true; command: DslCommand } | { ok: fals
       if (v.shape === 'text' && propsResult.props.text === undefined) {
         return { ok: false, error: '文字图形缺少 text 内容' }
       }
+      if (v.shape === 'path' && propsResult.props.points === undefined) {
+        return { ok: false, error: '路径图形缺少 points 坐标点序列' }
+      }
       return {
         ok: true,
         command: { action: 'draw', shape: v.shape as never, props: propsResult.props },
@@ -176,10 +237,40 @@ function validateOne(v: unknown): { ok: true; command: DslCommand } | { ok: fals
       const t = validateTarget(v.target)
       if (!t.ok) return t
 
+      let relativeTo: RelativeTo | undefined
+      if (v.relativeTo !== undefined) {
+        const r = v.relativeTo as Record<string, unknown>
+        if (!isRecord(r) || !RELATIVE_RELATIONS.includes(r.relation as never)) {
+          return { ok: false, error: '非法相对定位：relation 需为 left-of/right-of/above/below' }
+        }
+        relativeTo = { relation: r.relation as RelativeTo['relation'] }
+        if (r.shape !== undefined) {
+          if (!SHAPE_TYPES.includes(r.shape as never)) {
+            return { ok: false, error: `非法锚点图形: ${String(r.shape)}` }
+          }
+          relativeTo.shape = r.shape as RelativeTo['shape']
+        }
+        if (r.color !== undefined) {
+          if (typeof r.color !== 'string' || !HEX_COLOR.test(r.color)) {
+            return { ok: false, error: `非法锚点颜色: ${String(r.color)}` }
+          }
+          relativeTo.color = r.color
+        }
+        if (r.groupName !== undefined) {
+          if (typeof r.groupName !== 'string' || !r.groupName.trim()) {
+            return { ok: false, error: '非法锚点 groupName' }
+          }
+          relativeTo.groupName = r.groupName.trim()
+        }
+        if (relativeTo.shape === undefined && relativeTo.color === undefined && relativeTo.groupName === undefined) {
+          return { ok: false, error: '相对定位缺少锚点特征（shape/color/groupName）' }
+        }
+      }
+
       const hasDirection = v.direction !== undefined
       const hasPosition = v.position !== undefined
-      if (!hasDirection && !hasPosition) {
-        return { ok: false, error: '移动指令缺少方向或目标位置' }
+      if (!hasDirection && !hasPosition && !relativeTo) {
+        return { ok: false, error: '移动指令缺少方向、目标位置或锚点' }
       }
       if (hasDirection && !DIRECTIONS.includes(v.direction as never)) {
         return { ok: false, error: `非法方向: ${String(v.direction)}` }
@@ -207,6 +298,7 @@ function validateOne(v: unknown): { ok: true; command: DslCommand } | { ok: fals
           direction: hasDirection ? (v.direction as never) : undefined,
           position: hasPosition ? (v.position as never) : undefined,
           distance,
+          relativeTo,
         },
       }
     }
@@ -252,6 +344,12 @@ function validateOne(v: unknown): { ok: true; command: DslCommand } | { ok: fals
       return { ok: true, command: { action: 'undo' } }
     case 'redo':
       return { ok: true, command: { action: 'redo' } }
+    case 'background': {
+      if (typeof v.color !== 'string' || !HEX_COLOR.test(v.color)) {
+        return { ok: false, error: `非法背景色: ${String(v.color)}` }
+      }
+      return { ok: true, command: { action: 'background', color: v.color } }
+    }
     case 'export':
       return { ok: true, command: { action: 'export' } }
     case 'replay':

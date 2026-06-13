@@ -1,5 +1,5 @@
 import Konva from 'konva'
-import { getMainLayer } from '../canvas/stage'
+import { getMainLayer, getBackgroundLayer, getCanvasSize } from '../canvas/stage'
 import { syncHighlight } from '../canvas/highlight'
 import { useObjectsStore, type CanvasObject } from '../store/objects'
 
@@ -20,6 +20,7 @@ export interface Snapshot {
   nodes: SnapshotNode[]
   objects: CanvasObject[]
   selectedIds: string[]
+  background: string | null
 }
 
 /**
@@ -57,10 +58,14 @@ export function captureSnapshot(): Snapshot {
       return { className: serialized.className, attrs }
     })
 
+  const bgChild = getBackgroundLayer().getChildren()[0]
+  const bgColor = (bgChild instanceof Konva.Rect ? bgChild.fill() : null) as string | null
+
   return {
     nodes,
     objects: store.objects.map((o) => ({ ...o })),
     selectedIds: [...store.selectedIds],
+    background: bgColor,
   }
 }
 
@@ -77,6 +82,22 @@ export function restoreSnapshot(snapshot: Snapshot): void {
     layer.add(Konva.Node.create({ className: n.className, attrs: n.attrs }) as Konva.Shape)
   }
 
+  // 恢复背景层
+  const bgLayer = getBackgroundLayer()
+  bgLayer.destroyChildren()
+  if (plain.background) {
+    const { width, height } = getCanvasSize()
+    bgLayer.add(new Konva.Rect({
+      id: 'bg',
+      x: 0,
+      y: 0,
+      width,
+      height,
+      fill: plain.background,
+      listening: false,
+    }))
+  }
+
   useObjectsStore().restore(plain.objects, plain.selectedIds)
   syncHighlight()
 }
@@ -86,6 +107,7 @@ export function snapshotChanged(before: Snapshot): boolean {
   const now = captureSnapshot()
   return (
     JSON.stringify({ n: now.nodes, o: now.objects }) !==
-    JSON.stringify({ n: before.nodes, o: before.objects })
+    JSON.stringify({ n: before.nodes, o: before.objects }) ||
+    now.background !== before.background
   )
 }

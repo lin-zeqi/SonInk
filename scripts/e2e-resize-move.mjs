@@ -103,13 +103,14 @@ await send('把那条线放大一倍')
 s = await node(1)
 check('直线 scale 缩放', s?.cls === 'Line' && Math.abs(s.scaleX - 2) < 0.01, `scaleX=${s?.scaleX}`)
 
-// —— 7. 多匹配拒绝缩放 ——
+// —— 7. 多匹配组缩放（feat/13-canvas-power：匹配到多个时整体缩放） ——
 await send('清空画布') // PR #11 起需要二次确认
 await send('确认')
 await send('画一个红色的圆和一个蓝色的圆')
 await send('把圆放大')
 const fb = await feedback()
-check('多匹配时拒绝并提示', fb.includes('多个'), fb)
+// 组缩放后两个圆都放大，反馈含数量
+check('多匹配组缩放', fb.includes('2 个对象'), fb)
 
 await page.screenshot({ path: 'scripts/e2e-resize-move.png' })
 await browser.close()

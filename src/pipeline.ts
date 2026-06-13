@@ -7,8 +7,9 @@ import { useSettingsStore } from './store/settings'
 import { validateDsl } from './dsl/schema'
 import { executeAll } from './dsl/executor'
 import type { DslCommand } from './dsl/types'
-import { isShapeMissing, parseCommand } from './parser/rules'
+import { isShapeMissing, parseCommand, tryExpandTemplate } from './parser/rules'
 import { chat } from './llm/client'
+import { buildSystemPrompt } from './llm/prompt'
 import { speak } from './speech/tts'
 
 /**
@@ -82,6 +83,8 @@ async function runSlowPath(text: string, continuation: boolean): Promise<string>
   const assistant = useAssistantStore()
   const command = useCommandStore()
   assistant.begin(text, continuation)
+  // 每次 LLM 调用前刷新系统提示词中的画布状态，使 LLM 具备空间记忆
+  assistant.messages[0] = { role: 'system', content: buildSystemPrompt() }
   command.setFeedback('AI 思考中…')
 
   try {
@@ -159,6 +162,13 @@ async function handleText(text: string): Promise<string> {
   if (isShapeMissing(text)) {
     assistant.setClarify('想画什么图形呢？比如圆形、方形、三角形或直线')
     return '请补充想画的图形（见提问框）'
+  }
+
+  // LLM 未配置时，尝试模板本地展开作为回退（保留离线演示能力）
+  if (!useSettingsStore().activeConfig.ready) {
+    const fallback = tryExpandTemplate(text)
+    if (fallback.matched) return runCommands(fallback.commands)
+    return '这条指令需要 AI 辅助，请先点击右上角"设置"选择大模型服务商并填入 API Key'
   }
 
   return runSlowPath(text, false)

@@ -40,14 +40,12 @@ async function state() {
   }))
 }
 
-// —— 1. 语义模板：太阳 = 1 圆 + 8 光线 ——
+// —— 1. 语义模板：太阳 = 1 圆面 + 8 光芒，共 9 笔逐笔描画 ——
 await send('画一个太阳')
 let s = await state()
 check(
-  '太阳 = 圆 + 8 条光线',
-  s.nodes.length === 9 &&
-    s.nodes[0].cls === 'Circle' &&
-    s.nodes.filter((n) => n.cls === 'Line').length === 8,
+  '太阳 = 9 条路径（逐笔描画）',
+  s.nodes.length === 9 && s.nodes.every((n) => n.cls === 'Line'),
   `${s.nodes.length} 个节点`
 )
 
@@ -56,12 +54,13 @@ await send('清空画布')
 await send('确认')
 await send('画一个房子，左边加一棵树，右上角有太阳', 1500)
 s = await state()
-const house = s.nodes.slice(0, 2)
-const tree = s.nodes.slice(2, 4)
-const sun = s.nodes.slice(4)
+// 房子 1 笔 + 树 2 笔（树干+树冠）+ 太阳 9 笔 = 12 笔
+const house = s.nodes.slice(0, 1)
+const tree = s.nodes.slice(1, 3)
+const sun = s.nodes.slice(3)
 check(
-  '房子+树+太阳：13 个图形',
-  s.nodes.length === 13,
+  '房子+树+太阳：12 条路径',
+  s.nodes.length === 12 && s.nodes.every((n) => n.cls === 'Line'),
   `${s.nodes.length} 个节点`
 )
 check('树在房子左边', tree[0].cx < house[0].cx)
