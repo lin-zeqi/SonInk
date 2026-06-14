@@ -30,7 +30,6 @@ export async function chat(messages: ChatMessage[], cfg: LlmConfig): Promise<str
         model: cfg.model,
         messages,
         temperature: 0.2,
-        max_tokens: 2000,
         ...(cfg.jsonMode ? { response_format: { type: 'json_object' } } : {}),
       }),
       signal: controller.signal,

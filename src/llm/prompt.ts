@@ -5,116 +5,140 @@ import { useObjectsStore } from '../store/objects'
 import { SHAPE_LABELS, type ShapeType } from '../dsl/types'
 
 /**
- * 构建带画布记忆的精简系统提示词。
- * 原则：指令越短 → LLM 响应越快 → 用户等待越少。
- * 关键约束集中在规则和示例中，常见错误单独列出防呆。
+ * 构建带画布记忆的系统提示词。
+ * 静态部分教 LLM 脑中构图后用多条小 path 逐笔描画；
+ * 动态部分注入当前画布上已有对象的位置/形状/颜色/大小（fx/fy 比例坐标），
+ * 使 LLM 具备空间感知——知道哪里已有东西、新对象放在哪里不重叠。
  */
 export function buildSystemPrompt(): string {
   const canvasState = describeCanvas()
-  return `你是语音绘图工具。用户说中文口语，你输出 JSON 绘图指令。
+  return `你是语音绘图工具的指令解析器。用户用中文口语描述想画的内容。
+
+## 工作流程（脑中三步 → 输出 JSON）
+
+**第一步：观察画布。** 画布上已有对象的位置/大小见下方「画布状态」。
+**第二步：脑中构图。** 想好对象有几个部件、各部件什么形状、什么颜色、什么大小、放在哪里。
+**第三步：逐笔输出。** 每个部件一条小 path，共享 groupName。闭合轮廓必须填色（fill），开放线条只有描边。
 
 ## 输出格式
-成功 → {"commands": [指令, ...]}
-需要补充信息 → {"ask": "简短问题"}（最多两轮）
 
-## 指令
-draw: {"action":"draw","shape":"path","props":{"color":"#hex","points":[{"fx":...,"fy":...},...],"close":bool,"fill":"#hex","groupName":"名称"}}
-background: {"action":"background","color":"#hex"}
+成功：{"commands": [指令, ...]}
+追问：{"ask": "简短问题"}
 
-## 坐标
-fx: 0~1 横向（0=最左 0.5=中间 1=最右）
-fy: 0~1 纵向（0=最上 0.5=中间 1=最下）
-至少 10 个点圆才圆润。闭合轮廓(close:true)必须设 fill。
+## 指令格式
 
-## 示例
-画太阳（一个闭合轮廓+光线）：
+{"action":"draw","shape":"path","props":{
+  "color":"#RRGGBB",      // 描边颜色
+  "fill":"#RRGGBB",       // 填充颜色（闭合轮廓必填）
+  "points":[{"fx":...,"fy":...}, ...],  // 坐标点序列
+  "close":true,           // 闭合轮廓
+  "groupName":"对象名"    // 同一对象的多条 path 共用此名
+}}
+
+坐标：fx 横向 0~1，fy 纵向 0~1。画布宽高比约 3:2，fx 偏移折减 0.67。
+圆至少 14 点才圆润。
+
+## 填色规则（重要）
+
+- **闭合轮廓（close:true）→ 必须设 fill**，fill 通常与 color 相同
+- **开放线条 → 不设 fill 和 close**，只画描边
+- 示例：车身（闭合+填灰）、车轮（闭合+填黑）、车窗（闭合+填浅蓝）
+- 示例：手臂/腿/光线（开放线条，无 fill 无 close）
+
+## 背景色
+
+{"action":"background","color":"#RRGGBB"} — 设置画布背景色。背景位于所有图形下方，不会遮挡已有图形。通常在画第一笔之前或用户要求时设置。
+
+## 核心示例：画一辆小汽车
+
 {"commands":[
-{"action":"draw","shape":"path","props":{"color":"#f44336","fill":"#f44336","points":[{"fx":0.50,"fy":0.42},{"fx":0.54,"fy":0.43},{"fx":0.56,"fy":0.46},{"fx":0.56,"fy":0.50},{"fx":0.54,"fy":0.53},{"fx":0.50,"fy":0.54},{"fx":0.46,"fy":0.53},{"fx":0.44,"fy":0.50},{"fx":0.44,"fy":0.46},{"fx":0.46,"fy":0.43},{"fx":0.50,"fy":0.42}],"close":true,"groupName":"太阳"}},
-{"action":"draw","shape":"path","props":{"color":"#f44336","points":[{"fx":0.50,"fy":0.20},{"fx":0.50,"fy":0.32},{"fx":0.68,"fy":0.28},{"fx":0.54,"fy":0.35},{"fx":0.76,"fy":0.42},{"fx":0.56,"fy":0.42},{"fx":0.50,"fy":0.62},{"fx":0.50,"fy":0.72},{"fx":0.44,"fy":0.42},{"fx":0.30,"fy":0.42},{"fx":0.46,"fy":0.35},{"fx":0.18,"fy":0.30},{"fx":0.40,"fy":0.34}],"groupName":"太阳"}}
+  {"action":"draw","shape":"path","props":{"color":"#616161","fill":"#616161","points":[
+    {"fx":0.310,"fy":0.500},{"fx":0.305,"fy":0.470},{"fx":0.310,"fy":0.440},
+    {"fx":0.345,"fy":0.390},{"fx":0.400,"fy":0.375},{"fx":0.480,"fy":0.370},
+    {"fx":0.560,"fy":0.375},{"fx":0.610,"fy":0.390},{"fx":0.640,"fy":0.420},
+    {"fx":0.655,"fy":0.440},{"fx":0.660,"fy":0.470},{"fx":0.655,"fy":0.500}
+  ],"close":true,"groupName":"汽车"}},
+  {"action":"draw","shape":"path","props":{"color":"#212121","fill":"#212121","points":[
+    {"fx":0.365,"fy":0.505},{"fx":0.370,"fy":0.515},{"fx":0.380,"fy":0.522},
+    {"fx":0.390,"fy":0.524},{"fx":0.400,"fy":0.522},{"fx":0.410,"fy":0.515},
+    {"fx":0.415,"fy":0.505},{"fx":0.415,"fy":0.495},{"fx":0.410,"fy":0.485},
+    {"fx":0.400,"fy":0.478},{"fx":0.390,"fy":0.476},{"fx":0.380,"fy":0.478},
+    {"fx":0.370,"fy":0.485},{"fx":0.365,"fy":0.495},{"fx":0.365,"fy":0.505}
+  ],"close":true,"groupName":"汽车"}},
+  {"action":"draw","shape":"path","props":{"color":"#212121","fill":"#212121","points":[
+    {"fx":0.575,"fy":0.505},{"fx":0.580,"fy":0.515},{"fx":0.590,"fy":0.522},
+    {"fx":0.600,"fy":0.524},{"fx":0.610,"fy":0.522},{"fx":0.620,"fy":0.515},
+    {"fx":0.625,"fy":0.505},{"fx":0.625,"fy":0.495},{"fx":0.620,"fy":0.485},
+    {"fx":0.610,"fy":0.478},{"fx":0.600,"fy":0.476},{"fx":0.590,"fy":0.478},
+    {"fx":0.580,"fy":0.485},{"fx":0.575,"fy":0.495},{"fx":0.575,"fy":0.505}
+  ],"close":true,"groupName":"汽车"}},
+  {"action":"draw","shape":"path","props":{"color":"#212121","fill":"#212121","points":[
+    {"fx":0.365,"fy":0.450},{"fx":0.355,"fy":0.455},{"fx":0.355,"fy":0.460},
+    {"fx":0.365,"fy":0.465},{"fx":0.375,"fy":0.465},{"fx":0.385,"fy":0.460},
+    {"fx":0.385,"fy":0.455},{"fx":0.375,"fy":0.450},{"fx":0.365,"fy":0.450}
+  ],"close":true,"groupName":"汽车"}},
+  {"action":"draw","shape":"path","props":{"color":"#212121","fill":"#212121","points":[
+    {"fx":0.575,"fy":0.450},{"fx":0.565,"fy":0.455},{"fx":0.565,"fy":0.460},
+    {"fx":0.575,"fy":0.465},{"fx":0.585,"fy":0.465},{"fx":0.595,"fy":0.460},
+    {"fx":0.595,"fy":0.455},{"fx":0.585,"fy":0.450},{"fx":0.575,"fy":0.450}
+  ],"close":true,"groupName":"汽车"}},
+  {"action":"draw","shape":"path","props":{"color":"#81d4fa","fill":"#81d4fa","points":[
+    {"fx":0.420,"fy":0.410},{"fx":0.420,"fy":0.385},{"fx":0.450,"fy":0.380},
+    {"fx":0.470,"fy":0.380},{"fx":0.470,"fy":0.410}
+  ],"close":true,"groupName":"汽车"}},
+  {"action":"draw","shape":"path","props":{"color":"#81d4fa","fill":"#81d4fa","points":[
+    {"fx":0.485,"fy":0.410},{"fx":0.485,"fy":0.385},{"fx":0.510,"fy":0.380},
+    {"fx":0.530,"fy":0.380},{"fx":0.530,"fy":0.410}
+  ],"close":true,"groupName":"汽车"}}
 ]}
 
-画花（中心圆+花瓣）：
-{"commands":[
-{"action":"draw","shape":"path","props":{"color":"#e91e63","fill":"#e91e63","points":[{"fx":0.50,"fy":0.48},{"fx":0.52,"fy":0.46},{"fx":0.54,"fy":0.48},{"fx":0.52,"fy":0.50},{"fx":0.50,"fy":0.52},{"fx":0.48,"fy":0.50},{"fx":0.46,"fy":0.48},{"fx":0.48,"fy":0.46},{"fx":0.50,"fy":0.48}],"close":true,"groupName":"花"}},
-{"action":"draw","shape":"path","props":{"color":"#ffeb3b","fill":"#ffeb3b","points":[{"fx":0.50,"fy":0.49},{"fx":0.51,"fy":0.48},{"fx":0.52,"fy":0.49},{"fx":0.51,"fy":0.51},{"fx":0.50,"fy":0.49}],"close":true,"groupName":"花"}}
-]}
-
-画汽车（车身+车轮+车窗，各部件共享 groupName "汽车"）：
-{"commands":[
-{"action":"draw","shape":"path","props":{"color":"#616161","fill":"#616161","points":[{"fx":0.31,"fy":0.50},{"fx":0.31,"fy":0.44},{"fx":0.35,"fy":0.39},{"fx":0.48,"fy":0.37},{"fx":0.56,"fy":0.37},{"fx":0.61,"fy":0.39},{"fx":0.64,"fy":0.42},{"fx":0.66,"fy":0.47},{"fx":0.66,"fy":0.50}],"close":true,"groupName":"汽车"}},
-{"action":"draw","shape":"path","props":{"color":"#212121","fill":"#212121","points":[{"fx":0.36,"fy":0.51},{"fx":0.42,"fy":0.52},{"fx":0.42,"fy":0.48},{"fx":0.36,"fy":0.48}],"close":true,"groupName":"汽车"}},
-{"action":"draw","shape":"path","props":{"color":"#212121","fill":"#212121","points":[{"fx":0.58,"fy":0.51},{"fx":0.64,"fy":0.52},{"fx":0.64,"fy":0.48},{"fx":0.58,"fy":0.48}],"close":true,"groupName":"汽车"}},
-{"action":"draw","shape":"path","props":{"color":"#81d4fa","fill":"#81d4fa","points":[{"fx":0.42,"fy":0.41},{"fx":0.47,"fy":0.38},{"fx":0.47,"fy":0.41}],"close":true,"groupName":"汽车"}},
-{"action":"draw","shape":"path","props":{"color":"#81d4fa","fill":"#81d4fa","points":[{"fx":0.49,"fy":0.41},{"fx":0.53,"fy":0.38},{"fx":0.53,"fy":0.41}],"close":true,"groupName":"汽车"}}
-]}
-
-## 必遵守
-- 所有坐标用 fx/fy 比例，禁止像素值
-- 闭合轮廓(close:true)必须同时设 fill，fill 通常与 color 相同
-- 开放线条（如光线、手臂、腿）不设 close 和 fill
-- 同一对象的多个部件必须共享 groupName
-- 圆至少 10 点
+追问示例：{"ask":"想画什么呢？比如一辆汽车、一个人、一座房子？"}
+追问最多两轮。
 
 ## 常见错误（避免）
-1. ❌ 用像素坐标如 "x":300 → ✅ 只用 {"fx":...,"fy":...}
-2. ❌ 闭合路径忘了设 fill → ✅ close:true 必有 fill
-3. ❌ 不同对象的部件用了同一个 groupName → ✅ 不同对象用不同 groupName
-4. ❌ 忘了看画布状态，新对象和已有对象重叠 → ✅ 先读画布状态，避开已有对象的区域
+1. 不要用像素坐标如 "x":300 → 只用 {"fx":...,"fy":...}
+2. 闭合路径不要忘了设 fill → close:true 必有 fill
+3. 不同对象不要用同一个 groupName
 
 ${canvasState}`
 }
 
-/** 生成画布现状描述（紧凑格式，便于 LLM 快速理解空间布局） */
+/** 生成画布现状描述（比例坐标），注入系统提示词尾部 */
 function describeCanvas(): string {
   const store = useObjectsStore()
   const objs = store.objects
 
-  const lines: string[] = ['## 画布状态']
+  const lines: string[] = ['## 当前画布状态（比例坐标 fx/fy，范围 0~1）']
 
+  // 背景色
   const bgLayer = getBackgroundLayer()
   const bgChild = bgLayer.getChildren()[0]
   const bgColor = bgChild instanceof Konva.Rect ? (bgChild.fill() as string) : null
-  lines.push(bgColor ? `背景: ${bgColor}` : '背景: 白色')
+  lines.push(bgColor ? `背景色: ${bgColor}` : '背景: 无（白色）')
 
   if (objs.length === 0) {
-    lines.push('空画布')
+    lines.push('画布为空。')
     return lines.join('\n')
   }
 
   const { width, height } = getCanvasSize()
+  const ref = Math.min(width, height)
 
-  // 按组合分组，紧凑输出
-  const groups = new Map<string, typeof objs>()
-  const singles: typeof objs = []
+  lines.push(`画布上已有 ${objs.length} 个对象：`)
+
   for (const obj of objs) {
-    if (obj.groupName) {
-      const g = groups.get(obj.groupName) || []
-      g.push(obj)
-      groups.set(obj.groupName, g)
-    } else {
-      singles.push(obj)
-    }
-  }
-
-  const parts: string[] = []
-  for (const [gname, members] of groups) {
-    const node = findNode(members[0]?.id ?? '')
-    if (!node) continue
-    const box = node.getClientRect()
-    const cx = (box.x + box.width / 2) / width
-    const cy = (box.y + box.height / 2) / height
-    parts.push(`${gname}(fx:${cx.toFixed(2)},fy:${cy.toFixed(2)})`)
-  }
-  for (const obj of singles) {
     const node = findNode(obj.id)
     if (!node) continue
     const box = node.getClientRect()
     const cx = (box.x + box.width / 2) / width
     const cy = (box.y + box.height / 2) / height
+    const r = (Math.max(box.width, box.height) / 2) / ref
+
     const label = SHAPE_LABELS[obj.shape as ShapeType] ?? obj.shape
-    parts.push(`${label}(${obj.color},fx:${cx.toFixed(2)},fy:${cy.toFixed(2)})`)
+    const group = obj.groupName ? ` (组合: ${obj.groupName})` : ''
+    const part = obj.part ? ` [${obj.part}]` : ''
+    lines.push(`- ${obj.id} | ${label}${part}${group} | ${obj.color} | 中心(fx:${cx.toFixed(3)},fy:${cy.toFixed(3)}) | 外接半径:${r.toFixed(3)}`)
   }
 
-  lines.push(`已有 ${objs.length} 个对象: ${parts.join(' | ')}`)
   return lines.join('\n')
 }

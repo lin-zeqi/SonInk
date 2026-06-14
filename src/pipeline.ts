@@ -284,10 +284,12 @@ async function handleText(text: string): Promise<string> {
     return '请补充想画的图形（见提问框）'
   }
 
-  // LLM 未配置时，尝试模板本地展开作为回退（保留离线演示能力）
+  // 内置模板始终本地展开（太阳/房子/树/雪人/小人/笑脸），无论是否配置 LLM
+  const templateResult = tryExpandTemplate(text)
+  if (templateResult.matched) return runCommands(templateResult.commands)
+
+  // LLM 未配置：模板已兜底，提示用户配置 AI 或换指令
   if (!useSettingsStore().activeConfig.ready) {
-    const fallback = tryExpandTemplate(text)
-    if (fallback.matched) return runCommands(fallback.commands)
     return '这条指令需要 AI 辅助，请先点击右上角"设置"选择大模型服务商并填入 API Key'
   }
 
