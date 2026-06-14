@@ -12,28 +12,47 @@ export interface ChatMessage {
   content: string
 }
 
+/** LLM 请求超时（毫秒），超过此值放弃等待 */
+const REQUEST_TIMEOUT_MS = 30_000
+
 export async function chat(messages: ChatMessage[], cfg: LlmConfig): Promise<string> {
-  const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${cfg.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: cfg.model,
-      messages,
-      temperature: 0.2,
-      ...(cfg.jsonMode ? { response_format: { type: 'json_object' } } : {}),
-    }),
-  })
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
 
-  if (!res.ok) {
-    throw new Error(res.status === 401 ? 'API Key 无效' : `API 请求失败（${res.status}）`)
+  try {
+    const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${cfg.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: cfg.model,
+        messages,
+        temperature: 0.2,
+        max_tokens: 2000,
+        ...(cfg.jsonMode ? { response_format: { type: 'json_object' } } : {}),
+      }),
+      signal: controller.signal,
+    })
+
+    if (!res.ok) {
+      if (res.status === 401) throw new Error('API Key 无效，请在设置中检查')
+      if (res.status === 429) throw new Error('API 请求过于频繁，请稍后再试')
+      throw new Error(`API 请求失败（${res.status}）`)
+    }
+
+    const data: unknown = await res.json()
+    const content = (data as { choices?: Array<{ message?: { content?: unknown } }> })
+      ?.choices?.[0]?.message?.content
+    if (typeof content !== 'string') throw new Error('API 响应格式异常')
+    return content
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new Error('AI 响应超时（30s），请换个简短说法再试')
+    }
+    throw err
+  } finally {
+    clearTimeout(timer)
   }
-
-  const data: unknown = await res.json()
-  const content = (data as { choices?: Array<{ message?: { content?: unknown } }> })
-    ?.choices?.[0]?.message?.content
-  if (typeof content !== 'string') throw new Error('API 响应格式异常')
-  return content
 }
