@@ -10,9 +10,12 @@ import type {
 } from '../dsl/types'
 import {
   COLOR_SYNONYMS,
+  COMPARISON_SYNONYMS,
+  ORDINAL_PATTERN,
   POSITION_SYNONYMS,
   SHAPE_SYNONYMS,
   SIZE_SYNONYMS,
+  SPATIAL_QUALIFIERS,
   lookup,
   normalize,
   parseNumber,
@@ -83,8 +86,12 @@ const DIRECTION_MAP: Record<string, Direction> = {
 const ABSOLUTE_SIZE_PATTERN = /(?:半径|大小|尺寸)(?:为|是)?([零一二两三四五六七八九十百\d]+)/
 
 /** 相对定位："在圆的右边"、"在红色的圆左边"（锚点描述限长防贪婪误吞全句） */
+/** "在圆的右边画方形"——单锚点相对定位 */
 const RELATIVE_PATTERN =
   /在(.{1,10}?)的?(右边|右侧|右面|左边|左侧|左面|上面|上方|上边|下面|下方|下边)/
+
+/** "在圆和三角之间画矩形"——双锚点之间定位，须在 CLAUSE_SPLITTER 之前匹配 */
+const BETWEEN_PATTERN = /在(.{1,8}?)(?:和|与|以及)(.{1,8}?)的?(?:之间|中间)/
 
 const RELATION_MAP: Record<string, RelativeRelation> = {
   右边: 'right-of',
@@ -99,6 +106,8 @@ const RELATION_MAP: Record<string, RelativeRelation> = {
   下面: 'below',
   下方: 'below',
   下边: 'below',
+  之间: 'between',
+  中间: 'between',
 }
 
 function extractSize(text: string): { size: DrawProps['size'] | undefined; rest: string } {
@@ -117,6 +126,24 @@ function parseDraw(text: string): ParseResult {
   // 相对定位锚点先行剥离："在圆的右边画方形"——锚点（圆）不能参与新图形的槽位提取
   let working = text
   let relativeTo: RelativeTo | undefined
+
+  // between 双锚点："在圆和三角之间画矩形"
+  const between = working.match(BETWEEN_PATTERN)
+  if (between) {
+    const shape1 = lookup(between[1], SHAPE_SYNONYMS)
+    const color1 = lookup(between[1], COLOR_SYNONYMS)
+    const shape2 = lookup(between[2], SHAPE_SYNONYMS)
+    const color2 = lookup(between[2], COLOR_SYNONYMS)
+    if ((shape1 || color1) && (shape2 || color2)) {
+      relativeTo = { relation: 'between' }
+      if (shape1) relativeTo.shape = shape1
+      if (color1) relativeTo.color = color1
+      if (shape2) relativeTo.shape2 = shape2
+      if (color2) relativeTo.color2 = color2
+      working = working.replace(between[0], '')
+    }
+  }
+
   const rel = working.match(RELATIVE_PATTERN)
   if (rel) {
     const anchorShape = lookup(rel[1], SHAPE_SYNONYMS)
@@ -162,14 +189,33 @@ function extractTarget(text: string): TargetSpec {
   const color = lookup(text, COLOR_SYNONYMS)
   if (color) target.color = color
 
+  const spatial = lookup(text, SPATIAL_QUALIFIERS)
+  if (spatial) target.spatial = spatial
+
+  const ordinalMatch = text.match(ORDINAL_PATTERN)
+  if (ordinalMatch) {
+    const n = parseNumber(ordinalMatch[1])
+    if (n !== null && n > 0) target.ordinal = n
+  }
+
+  const comparison = lookup(text, COMPARISON_SYNONYMS)
+  if (comparison) target.comparison = comparison
+
   if (LAST_REF_PATTERN.test(text)) {
     target.ref = 'last'
-  } else if (!shape && !color && PRONOUN_PATTERN.test(text)) {
+  } else if (
+    !shape &&
+    !color &&
+    !target.spatial &&
+    target.ordinal === undefined &&
+    !target.comparison &&
+    PRONOUN_PATTERN.test(text)
+  ) {
     target.ref = 'selected'
   }
 
   // 无特征/指代时尝试匹配模板名作为 groupName（"把太阳移到左边"）
-  if (!shape && !color && target.ref === undefined) {
+  if (!shape && !color && target.ref === undefined && target.spatial === undefined && target.ordinal === undefined && target.comparison === undefined) {
     const tpl = lookupTemplate(text)
     if (tpl) {
       target.groupName = tpl[0]
@@ -189,7 +235,13 @@ function extractTarget(text: string): TargetSpec {
 }
 
 function hasTarget(target: TargetSpec): boolean {
-  return target.ref !== undefined || target.shape !== undefined || target.color !== undefined || target.groupName !== undefined
+  return target.ref !== undefined
+    || target.shape !== undefined
+    || target.color !== undefined
+    || target.groupName !== undefined
+    || target.spatial !== undefined
+    || target.ordinal !== undefined
+    || target.comparison !== undefined
 }
 
 function parseSelect(text: string): ParseResult {
@@ -221,6 +273,29 @@ function parseMove(text: string): ParseResult {
     }
   }
 
+  // between 双锚点移动："放到圆和三角之间"
+  const between = text.match(BETWEEN_PATTERN)
+  if (between) {
+    const shape1 = lookup(between[1], SHAPE_SYNONYMS)
+    const color1 = lookup(between[1], COLOR_SYNONYMS)
+    const shape2 = lookup(between[2], SHAPE_SYNONYMS)
+    const color2 = lookup(between[2], COLOR_SYNONYMS)
+    let knownGroups: string[] = []
+    try { knownGroups = [...new Set(useObjectsStore().objects.map((o) => o.groupName).filter((g): g is string => g != null))] } catch { /* Pinia 未初始化 */ }
+    const group1 = knownGroups.find((g) => between[1].includes(g!))
+    const group2 = knownGroups.find((g) => between[2].includes(g!))
+    if ((shape1 || color1 || group1) && (shape2 || color2 || group2)) {
+      cmd.relativeTo = { relation: 'between' }
+      if (shape1) cmd.relativeTo.shape = shape1
+      if (color1) cmd.relativeTo.color = color1
+      if (group1) cmd.relativeTo.groupName = group1
+      if (shape2) cmd.relativeTo.shape2 = shape2
+      if (color2) cmd.relativeTo.color2 = color2
+      if (group2) cmd.relativeTo.groupName2 = group2
+      return { matched: true, commands: [cmd] }
+    }
+  }
+
   // 相对已有对象定位："放在汽车正下方"、"移到红色圆的左边"
   const rel = text.match(RELATIVE_PATTERN)
   if (rel) {
@@ -228,7 +303,7 @@ function parseMove(text: string): ParseResult {
     const anchorColor = lookup(rel[1], COLOR_SYNONYMS)
     // 检查是否是动态 groupName（如 LLM 创建的"汽车"、"马路"）
     let knownGroups: string[] = []
-    try { knownGroups = [...new Set(useObjectsStore().objects.map((o) => o.groupName).filter(Boolean))] } catch { /* Pinia 未初始化 */ }
+    try { knownGroups = [...new Set(useObjectsStore().objects.map((o) => o.groupName).filter((g): g is string => g != null))] } catch { /* Pinia 未初始化 */ }
     const anchorGroup = knownGroups.find((g) => rel[1].includes(g!))
     if (anchorShape || anchorColor || anchorGroup) {
       cmd.relativeTo = { relation: RELATION_MAP[rel[2]] }
@@ -397,6 +472,71 @@ function parseSingle(raw: string): ParseResult {
  * 去掉动词、指代与量词后没有任何剩余信息时，由管道发起规则级追问，
  * 不浪费一次 LLM 调用。注意"画一个人"residual 为"人"，仍交给 LLM。
  */
+/** 笔刷启停 */
+const BRUSH_START_PATTERN = /^(开始|自由|手动|语音)画(线|画|笔|刷)?/
+const BRUSH_STOP_PATTERN = /^(停|结束|画完|好[了啦]?)/
+const BRUSH_CANCEL_PATTERN = /^(取消|算了|不要了|不画了)/
+
+/** 笔刷方向 + 复合方向（右上/左下等） */
+const BRUSH_DIR_PATTERN = /往([左右上下]{1,2})(?:移|画|走)?/
+
+/** 笔刷步长修饰 */
+const BRUSH_DIST_PATTERN = /(一点点|一点|一些|很多|许多|一大步)/
+
+export type BrushStep =
+  | { kind: 'start' }
+  | { kind: 'stop' }
+  | { kind: 'cancel' }
+  | { kind: 'move'; dfx: number; dfy: number }
+
+/** 笔刷步长（比例坐标，与 MOVE_FRACTIONS 同级） */
+const BRUSH_STEPS: Record<'small' | 'medium' | 'large', number> = {
+  small: 0.04,
+  medium: 0.08,
+  large: 0.16,
+}
+
+/**
+ * 解析笔刷模式下的单条语音指令。
+ * 方向字符直接映射为 dfx/dfy 偏移量，支持复合方向（"右上"/"左下"等）。
+ */
+export function parseBrushStep(text: string): BrushStep | null {
+  const t = text.trim()
+  if (!t) return null
+
+  if (BRUSH_START_PATTERN.test(t)) return { kind: 'start' }
+  if (BRUSH_STOP_PATTERN.test(t)) return { kind: 'stop' }
+  if (BRUSH_CANCEL_PATTERN.test(t)) return { kind: 'cancel' }
+
+  const dirMatch = t.match(BRUSH_DIR_PATTERN)
+  if (!dirMatch) return null
+
+  // 解析方向字符 → dfx/dfy 符号
+  const dirChars = dirMatch[1]
+  let dfx = 0
+  let dfy = 0
+  for (const ch of dirChars) {
+    if (ch === '左') dfx = -1
+    else if (ch === '右') dfx = 1
+    else if (ch === '上') dfy = -1
+    else if (ch === '下') dfy = 1
+  }
+
+  if (dfx === 0 && dfy === 0) return null
+
+  // 步长解析
+  let dist: 'small' | 'medium' | 'large' = 'medium'
+  const distMatch = t.match(BRUSH_DIST_PATTERN)
+  if (distMatch) {
+    const m = distMatch[1]
+    if (/一点点|一点|一些/.test(m)) dist = 'small'
+    else if (/很多|许多|一大步/.test(m)) dist = 'large'
+  }
+
+  const step = BRUSH_STEPS[dist]
+  return { kind: 'move', dfx: dfx * step, dfy: dfy * step }
+}
+
 export function isShapeMissing(raw: string): boolean {
   const text = normalize(raw)
   if (!DRAW_VERB_PATTERN.test(text)) return false
@@ -439,6 +579,12 @@ export function tryExpandTemplate(raw: string): ParseResult {
  * 无动词子句（"…和一个蓝色的圆"的后半句）承接前一子句的绘制意图。
  */
 export function parseCommand(raw: string): ParseResult {
+  // between 中含"和"会被 CLAUSE_SPLITTER 误拆，先整句尝试再走拆分
+  if (BETWEEN_PATTERN.test(raw)) {
+    const result = parseSingle(raw)
+    if (result.matched) return result
+  }
+
   const clauses = raw.split(CLAUSE_SPLITTER).filter((c) => normalize(c) !== '')
 
   if (clauses.length > 1) {

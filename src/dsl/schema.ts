@@ -82,7 +82,7 @@ function validateProps(v: unknown): { ok: true; props: DrawProps } | { ok: false
   if (v.relativeTo !== undefined) {
     const r = v.relativeTo as Record<string, unknown>
     if (!isRecord(r) || !RELATIVE_RELATIONS.includes(r.relation as never)) {
-      return { ok: false, error: '非法相对定位：relation 需为 left-of/right-of/above/below' }
+      return { ok: false, error: `非法相对定位：relation 需为 ${RELATIVE_RELATIONS.join('/')}` }
     }
     const relativeTo: RelativeTo = { relation: r.relation as RelativeTo['relation'] }
     if (r.shape !== undefined) {
@@ -103,8 +103,32 @@ function validateProps(v: unknown): { ok: true; props: DrawProps } | { ok: false
       }
       relativeTo.groupName = r.groupName.trim()
     }
-    if (relativeTo.shape === undefined && relativeTo.color === undefined && relativeTo.groupName === undefined) {
+    // 第二锚点（between）
+    if (r.shape2 !== undefined) {
+      if (!SHAPE_TYPES.includes(r.shape2 as never)) {
+        return { ok: false, error: `非法第二锚点图形: ${String(r.shape2)}` }
+      }
+      relativeTo.shape2 = r.shape2 as RelativeTo['shape2']
+    }
+    if (r.color2 !== undefined) {
+      if (typeof r.color2 !== 'string' || !HEX_COLOR.test(r.color2)) {
+        return { ok: false, error: `非法第二锚点颜色: ${String(r.color2)}` }
+      }
+      relativeTo.color2 = r.color2
+    }
+    if (r.groupName2 !== undefined) {
+      if (typeof r.groupName2 !== 'string' || !r.groupName2.trim()) {
+        return { ok: false, error: '非法第二锚点 groupName2' }
+      }
+      relativeTo.groupName2 = r.groupName2.trim()
+    }
+    const hasAnchor1 = relativeTo.shape !== undefined || relativeTo.color !== undefined || relativeTo.groupName !== undefined
+    const hasAnchor2 = relativeTo.shape2 !== undefined || relativeTo.color2 !== undefined || relativeTo.groupName2 !== undefined
+    if (!hasAnchor1) {
       return { ok: false, error: '相对定位缺少锚点特征（shape/color/groupName）' }
+    }
+    if (relativeTo.relation === 'between' && !hasAnchor2) {
+      return { ok: false, error: 'between 需要第二锚点特征（shape2/color2/groupName2）' }
     }
     props.relativeTo = relativeTo
   }
@@ -241,7 +265,7 @@ function validateOne(v: unknown): { ok: true; command: DslCommand } | { ok: fals
       if (v.relativeTo !== undefined) {
         const r = v.relativeTo as Record<string, unknown>
         if (!isRecord(r) || !RELATIVE_RELATIONS.includes(r.relation as never)) {
-          return { ok: false, error: '非法相对定位：relation 需为 left-of/right-of/above/below' }
+          return { ok: false, error: `非法相对定位：relation 需为 ${RELATIVE_RELATIONS.join('/')}` }
         }
         relativeTo = { relation: r.relation as RelativeTo['relation'] }
         if (r.shape !== undefined) {
@@ -262,8 +286,31 @@ function validateOne(v: unknown): { ok: true; command: DslCommand } | { ok: fals
           }
           relativeTo.groupName = r.groupName.trim()
         }
-        if (relativeTo.shape === undefined && relativeTo.color === undefined && relativeTo.groupName === undefined) {
+        if (r.shape2 !== undefined) {
+          if (!SHAPE_TYPES.includes(r.shape2 as never)) {
+            return { ok: false, error: `非法第二锚点图形: ${String(r.shape2)}` }
+          }
+          relativeTo.shape2 = r.shape2 as RelativeTo['shape2']
+        }
+        if (r.color2 !== undefined) {
+          if (typeof r.color2 !== 'string' || !HEX_COLOR.test(r.color2)) {
+            return { ok: false, error: `非法第二锚点颜色: ${String(r.color2)}` }
+          }
+          relativeTo.color2 = r.color2
+        }
+        if (r.groupName2 !== undefined) {
+          if (typeof r.groupName2 !== 'string' || !r.groupName2.trim()) {
+            return { ok: false, error: '非法第二锚点 groupName2' }
+          }
+          relativeTo.groupName2 = r.groupName2.trim()
+        }
+        const hasAnchor1 = relativeTo.shape !== undefined || relativeTo.color !== undefined || relativeTo.groupName !== undefined
+        const hasAnchor2 = relativeTo.shape2 !== undefined || relativeTo.color2 !== undefined || relativeTo.groupName2 !== undefined
+        if (!hasAnchor1) {
           return { ok: false, error: '相对定位缺少锚点特征（shape/color/groupName）' }
+        }
+        if (relativeTo.relation === 'between' && !hasAnchor2) {
+          return { ok: false, error: 'between 需要第二锚点特征（shape2/color2/groupName2）' }
         }
       }
 

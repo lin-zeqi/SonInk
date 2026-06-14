@@ -1,4 +1,5 @@
 import { watch } from 'vue'
+import Konva from 'konva'
 import { useCommandStore } from './store/command'
 import { useAssistantStore } from './store/assistant'
 import { useHistoryStore } from './store/history'
@@ -6,8 +7,9 @@ import { useObjectsStore } from './store/objects'
 import { useSettingsStore } from './store/settings'
 import { validateDsl } from './dsl/schema'
 import { executeAll } from './dsl/executor'
-import type { DslCommand } from './dsl/types'
-import { isShapeMissing, parseCommand, tryExpandTemplate } from './parser/rules'
+import type { DslCommand, DrawCommand } from './dsl/types'
+import { isShapeMissing, parseBrushStep, parseCommand, tryExpandTemplate } from './parser/rules'
+import { getCanvasSize, getMainLayer } from './canvas/stage'
 import { chat } from './llm/client'
 import { buildSystemPrompt } from './llm/prompt'
 import { speak } from './speech/tts'
@@ -22,12 +24,108 @@ import { speak } from './speech/tts'
  * 另保留 DSL JSON 直通通道（调试用）。
  */
 
+/** LLM 追问轮数硬上限（兜底提示词约束，极端情况截断防无限追问） */
+const MAX_ASK_ROUNDS = 2
+
 const CANCEL_PATTERN = /取消|算了|不用了|不画了/
 
 const CONFIRM_YES_PATTERN = /确认|确定|是的|没错|好/
 
 /** 等待确认的指令序列（清空画布二次确认） */
 let pendingCommands: DslCommand[] | null = null
+
+// ─── 自由笔刷状态机 ───────────────────────────────────────────
+
+/** 笔刷模式是否激活 */
+let brushActive = false
+/** 当前笔刷的临时 Konva.Line 节点（null = 未创建） */
+let brushLine: Konva.Line | null = null
+/** 已累积的路径点（比例坐标），首点为笔刷起点 */
+let brushPoints: { fx: number; fy: number }[] = []
+/** 笔刷描边色 */
+let brushColor = '#212121'
+
+function startBrush(): string {
+  const { width, height } = getCanvasSize()
+  // 起点：画布中心 + 微小随机偏移，避免与已有对象完全重叠
+  const fx = 0.5 + (Math.random() - 0.5) * 0.08
+  const fy = 0.5 + (Math.random() - 0.5) * 0.08
+
+  brushPoints = [{ fx, fy }]
+  brushColor = '#212121'
+
+  // 创建临时 Konva.Line（初始为一点，几乎不可见；extend 后逐步显现）
+  const line = new Konva.Line({
+    points: [fx * width, fy * height, fx * width + 1, fy * height],
+    stroke: brushColor,
+    strokeWidth: 3,
+    lineCap: 'round',
+    lineJoin: 'round',
+    tension: 0.3,
+    draggable: false, // 绘制中不可拖拽
+  })
+  getMainLayer().add(line)
+  brushLine = line
+  brushActive = true
+
+  return '笔刷就绪，请说方向（往右、往下、往左、往上），说完说"停"'
+}
+
+function stepBrush(dfx: number, dfy: number): string {
+  if (!brushLine) return '笔刷未启动'
+
+  const last = brushPoints[brushPoints.length - 1]
+  const nfx = Math.max(0, Math.min(1, last.fx + dfx))
+  const nfy = Math.max(0, Math.min(1, last.fy + dfy))
+
+  brushPoints.push({ fx: nfx, fy: nfy })
+
+  const { width, height } = getCanvasSize()
+  const flat = brushPoints.flatMap((p) => [p.fx * width, p.fy * height])
+  brushLine.points(flat)
+  brushLine.getLayer()?.batchDraw()
+
+  const parts: string[] = []
+  if (dfx > 0) parts.push('右')
+  else if (dfx < 0) parts.push('左')
+  if (dfy > 0) parts.push('下')
+  else if (dfy < 0) parts.push('上')
+  return parts.length > 1 ? `往${parts.join('')}一步` : `往${parts[0]}一步`
+}
+
+function finishBrush(): string {
+  if (!brushLine || brushPoints.length < 2) {
+    cancelBrush()
+    return '笔刷路径太短，已取消'
+  }
+
+  // 销毁临时线，走正常 executeAll 流程（含快照/历史/逐笔描画）
+  brushLine.destroy()
+  brushLine = null
+  brushActive = false
+
+  const cmd: DrawCommand = {
+    action: 'draw',
+    shape: 'path',
+    props: { color: brushColor, points: [...brushPoints] },
+  }
+  const result = executeAll([cmd])
+
+  brushPoints = []
+  brushColor = '#212121'
+  return result.ok ? '已画一笔自由线条' : result.message
+}
+
+function cancelBrush(): string {
+  if (brushLine) {
+    brushLine.destroy()
+    brushLine = null
+  }
+  brushPoints = []
+  brushColor = '#212121'
+  brushActive = false
+  return '笔刷已取消'
+}
 
 /**
  * 执行指令序列入口：破坏性操作（画布非空时的清空）先二次确认，
@@ -58,6 +156,10 @@ function applyLlmReply(reply: string): string {
   const obj = parsed as { ask?: unknown; commands?: unknown }
 
   if (typeof obj.ask === 'string' && obj.ask) {
+    if (assistant.askCount >= MAX_ASK_ROUNDS) {
+      assistant.reset()
+      return 'AI 已追问多次仍无法确定指令，请换个简短说法再试'
+    }
     assistant.finish(reply, obj.ask)
     return '我需要补充一点信息（见提问框）'
   }
@@ -146,12 +248,30 @@ async function handleText(text: string): Promise<string> {
 
   // 追问等待中：本次输入是对 AI 问题的回答（取消词除外）
   if (assistant.ask) {
-    if (CANCEL_PATTERN.test(text)) {
+    // 安全兜底：追问轮数超限（正常路径由 applyLlmReply 截断，此处防极端时序）
+    if (assistant.askCount > MAX_ASK_ROUNDS) {
+      assistant.reset()
+      // 落到下方规则引擎解析
+    } else if (CANCEL_PATTERN.test(text)) {
       assistant.reset()
       return '好的，已取消'
+    } else {
+      return runSlowPath(text, true)
     }
-    return runSlowPath(text, true)
   }
+
+  // 自由笔刷模式：方向/启停控制，阻断其他指令（撤销除外）
+  if (brushActive) {
+    const step = parseBrushStep(text)
+    if (!step || step.kind === 'start') return '笔刷模式中，请说方向（往右/往下/往左/往上）或说"停"'
+    if (step.kind === 'stop') return finishBrush()
+    if (step.kind === 'cancel') return cancelBrush()
+    return stepBrush(step.dfx, step.dfy)
+  }
+
+  // 笔刷启动词："开始画线"（未进入笔刷模式时匹配）
+  const brushStart = parseBrushStep(text)
+  if (brushStart?.kind === 'start') return startBrush()
 
   const ruleResult = parseCommand(text)
   if (ruleResult.matched) {

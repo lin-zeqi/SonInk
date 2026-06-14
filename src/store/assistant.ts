@@ -16,6 +16,8 @@ export const useAssistantStore = defineStore('assistant', {
     /** 规则级追问（缺图形词），非空时追问面板显示中，下一条输入按回答处理 */
     clarify: '',
     messages: [] as ChatMessage[],
+    /** LLM 追问轮数计数器，防止无限追问（代码级硬限制，兜底提示词约束） */
+    askCount: 0,
   }),
   actions: {
     setConfirm(question: string) {
@@ -28,6 +30,7 @@ export const useAssistantStore = defineStore('assistant', {
     begin(userText: string, continuation: boolean) {
       if (!continuation || this.messages.length === 0) {
         this.messages = [{ role: 'system', content: buildSystemPrompt() }]
+        this.askCount = 0
       }
       this.messages.push({ role: 'user', content: userText })
       this.thinking = true
@@ -38,11 +41,13 @@ export const useAssistantStore = defineStore('assistant', {
       this.messages.push({ role: 'assistant', content: reply })
       this.thinking = false
       this.ask = ask
+      if (ask) this.askCount++
     },
     reset() {
       this.thinking = false
       this.ask = ''
       this.messages = []
+      this.askCount = 0
     },
   },
 })

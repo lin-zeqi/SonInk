@@ -41,8 +41,14 @@ export interface PathPoint {
   fy: number
 }
 
+/** 空间限定："左边那个"/"最上面那个"/"中间那个" */
+export type SpatialQualifier = 'leftmost' | 'rightmost' | 'topmost' | 'bottommost' | 'center'
+
+/** 比较限定："最大的那个"/"最小的那个"（按包围盒面积） */
+export type ComparisonQualifier = 'largest' | 'smallest'
+
 /** 相对已有对象的方位关系 */
-export type RelativeRelation = 'left-of' | 'right-of' | 'above' | 'below'
+export type RelativeRelation = 'left-of' | 'right-of' | 'above' | 'below' | 'between'
 
 /**
  * 相对定位锚点（"在圆的右边画一个方形"）。
@@ -54,6 +60,10 @@ export interface RelativeTo {
   /** 按组合对象名匹配锚点（如 LLM 创建的"汽车"、"马路"） */
   groupName?: string
   relation: RelativeRelation
+  /** between 第二锚点特征 */
+  shape2?: ShapeType
+  color2?: string
+  groupName2?: string
 }
 
 export interface DrawProps {
@@ -105,6 +115,12 @@ export interface TargetSpec {
   groupName?: string
   /** 按部件角色匹配 */
   part?: string
+  /** 空间限定："左边那个"/"最上面那个"/"中间那个" */
+  spatial?: SpatialQualifier
+  /** 序数："第二个"（从 1 开始，按 seq 创建顺序） */
+  ordinal?: number
+  /** 比较限定："最大的那个"/"最小的那个"（按包围盒面积） */
+  comparison?: ComparisonQualifier
 }
 
 export interface SelectCommand {
@@ -222,6 +238,7 @@ export const RELATIVE_RELATIONS: readonly RelativeRelation[] = [
   'right-of',
   'above',
   'below',
+  'between',
 ]
 
 export const SHAPE_LABELS: Record<ShapeType, string> = {

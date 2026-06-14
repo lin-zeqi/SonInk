@@ -16,6 +16,7 @@ import {
   POSITION_FRACTIONS,
   POSITION_LABELS,
   SHAPE_LABELS,
+  type ComparisonQualifier,
   type DeleteCommand,
   type Direction,
   type DslCommand,
@@ -28,6 +29,8 @@ import {
   type SelectCommand,
   type SemanticPosition,
   type SemanticSize,
+  type ShapeType,
+  type SpatialQualifier,
   type StyleCommand,
   type TargetSpec,
 } from './types'
@@ -227,20 +230,21 @@ function resolveTarget(target: TargetSpec | undefined): CanvasObject[] {
   // groupName 优先：取最近创建的同名组（"把这个人变小" → 找到最近"人"组的所有图形）
   if (target?.groupName) {
     const groupObjects = all.filter((o) => o.groupName === target.groupName)
-    if (!groupObjects.length) return []
+    if (!groupObjects.length) return applyPostFilter([], target)
     // 取最近出现的 groupId
     const latestGroupId = groupObjects[groupObjects.length - 1].groupId
     let matched = all.filter((o) => o.groupId === latestGroupId)
     // part 细粒度过滤："删掉房子的屋顶" → groupName="房子" + part="屋顶"
     if (target.part) {
       matched = matched.filter((o) => o.part === target.part)
-      if (!matched.length) return []
+      if (!matched.length) return applyPostFilter([], target)
     }
-    return matched
+    return applyPostFilter(matched, target)
   }
 
   if (!target || (target.ref === undefined && !hasFeature)) {
-    return selected.length ? selected : all.slice(-1)
+    const matched = selected.length ? selected : all.slice(-1)
+    return applyPostFilter(matched, target)
   }
 
   if (hasFeature) {
@@ -253,12 +257,111 @@ function resolveTarget(target: TargetSpec | undefined): CanvasObject[] {
       const inSelection = matched.filter((o) => store.selectedIds.includes(o.id))
       if (inSelection.length) matched = inSelection
     }
-    if (target.ref === 'last' && matched.length > 1) return matched.slice(-1)
-    return matched
+    if (target.ref === 'last' && matched.length > 1) matched = matched.slice(-1)
+    return applyPostFilter(matched, target)
   }
 
-  if (target.ref === 'last') return all.slice(-1)
-  return selected.length ? selected : all.slice(-1)
+  if (target.ref === 'last') return applyPostFilter(all.slice(-1), target)
+  const matched = selected.length ? selected : all.slice(-1)
+  return applyPostFilter(matched, target)
+}
+
+/**
+ * 后过滤器：在特征匹配（shape/color/groupName）完成后，
+ * 按空间/序数/比较限定词将匹配集收窄为单个元素。
+ */
+function applyPostFilter(matched: CanvasObject[], target: TargetSpec | undefined): CanvasObject[] {
+  if (!target) return matched
+  // 如果用户明确用了代词（它/这个/那个），空间/序数/比较限定词
+  // 此时是其他用途（如移动目标位置），不做后过滤
+  if (target.ref) return matched
+
+  // 当目标集太小（≤1）但有限定词时，扩展到全部对象再做过滤——
+  // resolveTarget 的空 target 分支只返回 selected/last 单对象，"选中左边那个"
+  // 需要在全部对象中找最左。
+  if (matched.length <= 1 && (target.spatial || target.ordinal !== undefined || target.comparison)) {
+    const all = useObjectsStore().objects
+    if (all.length > matched.length) matched = [...all]
+  }
+  if (matched.length <= 1) return matched
+
+  if (target.spatial) {
+    matched = applySpatialFilter(matched, target.spatial)
+  }
+  if (target.ordinal !== undefined && matched.length > 1) {
+    matched = applyOrdinalFilter(matched, target.ordinal)
+  }
+  if (target.comparison && matched.length > 1) {
+    matched = applyComparisonFilter(matched, target.comparison)
+  }
+
+  return matched
+}
+
+/** 空间过滤：按包围盒中心位置选出最极端的对象 */
+function applySpatialFilter(matched: CanvasObject[], qualifier: SpatialQualifier): CanvasObject[] {
+  const { width, height } = getCanvasSize()
+
+  type Scored = { obj: CanvasObject; score: number }
+  const scored: Scored[] = []
+
+  for (const obj of matched) {
+    const node = findNode(obj.id)
+    if (!node) continue
+    const box = node.getClientRect()
+    const cx = box.x + box.width / 2
+    const cy = box.y + box.height / 2
+
+    let score: number
+    switch (qualifier) {
+      case 'leftmost':
+        score = -cx
+        break
+      case 'rightmost':
+        score = cx
+        break
+      case 'topmost':
+        score = -cy
+        break
+      case 'bottommost':
+        score = cy
+        break
+      case 'center':
+        score = -Math.hypot(cx - width / 2, cy - height / 2)
+        break
+      default:
+        return matched
+    }
+    scored.push({ obj, score })
+  }
+
+  if (!scored.length) return []
+  scored.sort((a, b) => b.score - a.score)
+  return [scored[0].obj]
+}
+
+/** 序数过滤："第一个" = seq 最小（最早创建），n 从 1 开始 */
+function applyOrdinalFilter(matched: CanvasObject[], n: number): CanvasObject[] {
+  const sorted = [...matched].sort((a, b) => a.seq - b.seq)
+  if (n < 1 || n > sorted.length) return []
+  return [sorted[n - 1]]
+}
+
+/** 比较过滤："最大的"/"最小的"按包围盒面积排序 */
+function applyComparisonFilter(matched: CanvasObject[], qualifier: ComparisonQualifier): CanvasObject[] {
+  type Scored = { obj: CanvasObject; area: number }
+  const scored: Scored[] = []
+
+  for (const obj of matched) {
+    const node = findNode(obj.id)
+    if (!node) continue
+    const box = node.getClientRect()
+    scored.push({ obj, area: box.width * box.height })
+  }
+
+  if (!scored.length) return []
+  scored.sort((a, b) => qualifier === 'largest' ? b.area - a.area : a.area - b.area)
+  return [scored[0].obj]
 }
 
 function describe(obj: CanvasObject): string {
@@ -273,20 +376,32 @@ function resolveRelativePosition(
   rel: RelativeTo,
   newSize: number
 ): { ok: true; position: PositionFraction } | { ok: false; message: string } {
-  const anchors = useObjectsStore().objects.filter(
-    (o) =>
-      (rel.shape === undefined || o.shape === rel.shape) &&
-      (rel.color === undefined || o.color === rel.color) &&
-      (rel.groupName === undefined || o.groupName === rel.groupName)
-  )
-  const anchor = anchors[anchors.length - 1]
-  const node = anchor ? findNode(anchor.id) : null
-  if (!node) {
-    const desc = rel.groupName ?? rel.shape ? (rel.shape ? SHAPE_LABELS[rel.shape] : rel.groupName) : '对象'
+  // between：双锚点中点
+  if (rel.relation === 'between') {
+    const anchor1 = findAnchor(rel.shape, rel.color, rel.groupName)
+    const anchor2 = findAnchor(rel.shape2, rel.color2, rel.groupName2)
+    if (!anchor1 || !anchor2) {
+      const desc1 = describeAnchor(rel.shape, rel.color, rel.groupName)
+      const desc2 = describeAnchor(rel.shape2, rel.color2, rel.groupName2)
+      const missing = !anchor1 ? desc1 : desc2
+      return { ok: false, message: `画布上没找到要参照的${missing}` }
+    }
+    const box1 = anchor1.getClientRect()
+    const box2 = anchor2.getClientRect()
+    const cx = ((box1.x + box1.width / 2) + (box2.x + box2.width / 2)) / 2
+    const cy = ((box1.y + box1.height / 2) + (box2.y + box2.height / 2)) / 2
+    const { width, height } = getCanvasSize()
+    const clamp = (v: number) => Math.min(0.98, Math.max(0.02, v))
+    return { ok: true, position: { fx: clamp(cx / width), fy: clamp(cy / height) } }
+  }
+
+  const anchor = findAnchor(rel.shape, rel.color, rel.groupName)
+  if (!anchor) {
+    const desc = describeAnchor(rel.shape, rel.color, rel.groupName)
     return { ok: false, message: `画布上没找到要参照的${desc}` }
   }
 
-  const box = node.getClientRect()
+  const box = anchor.getClientRect()
   const gap = 16
   let x = box.x + box.width / 2
   let y = box.y + box.height / 2
@@ -308,6 +423,33 @@ function resolveRelativePosition(
   const { width, height } = getCanvasSize()
   const clamp = (v: number) => Math.min(0.98, Math.max(0.02, v))
   return { ok: true, position: { fx: clamp(x / width), fy: clamp(y / height) } }
+}
+
+/** 按特征查找锚点 Konva 节点（多个匹配取最近创建的） */
+function findAnchor(
+  shape: ShapeType | undefined,
+  color: string | undefined,
+  groupName: string | undefined
+): Konva.Shape | null {
+  const matched = useObjectsStore().objects.filter(
+    (o) =>
+      (shape === undefined || o.shape === shape) &&
+      (color === undefined || o.color === color) &&
+      (groupName === undefined || o.groupName === groupName)
+  )
+  const obj = matched[matched.length - 1]
+  return obj ? findNode(obj.id) : null
+}
+
+/** 锚点描述文本（报错用） */
+function describeAnchor(
+  shape: ShapeType | undefined,
+  _color: string | undefined,
+  groupName: string | undefined
+): string {
+  if (groupName) return groupName
+  if (shape) return SHAPE_LABELS[shape]
+  return '对象'
 }
 
 function execDraw(cmd: DrawCommand): ExecResult {
@@ -524,6 +666,25 @@ function resizeOne(obj: CanvasObject, cmd: ResizeCommand): ExecResult {
     animateTo(node, {
       scaleX: (node.scaleX() || 1) * factor,
       scaleY: (node.scaleY() || 1) * factor,
+    })
+    return { ok: true, message: '' }
+  }
+
+  if (node instanceof Konva.Text) {
+    const currentSize = node.fontSize()
+    const target = Math.max(cmd.size ?? currentSize * (cmd.scale ?? 1), MIN_RADIUS)
+    getFeedbackLayer().destroyChildren()
+    setPendingAttrs(node.id(), { fontSize: target })
+    node.to({
+      fontSize: target,
+      duration: TRANSITION_DURATION,
+      easing: Konva.Easings.EaseInOut,
+      onFinish: () => {
+        clearPendingAttrs(node.id())
+        node.offsetX(node.width() / 2)
+        node.offsetY(node.height() / 2)
+        syncHighlight()
+      },
     })
     return { ok: true, message: '' }
   }

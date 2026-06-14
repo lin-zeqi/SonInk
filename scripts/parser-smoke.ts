@@ -2,7 +2,7 @@
  * 规则解析引擎冒烟测试：node 环境直接跑，不依赖浏览器。
  * 用法：npx tsx scripts/parser-smoke.ts
  */
-import { isShapeMissing, parseCommand } from '../src/parser/rules'
+import { isShapeMissing, parseBrushStep, parseCommand } from '../src/parser/rules'
 
 const cases: Array<[string, string]> = [
   ['画一个圆', '基础'],
@@ -87,4 +87,34 @@ console.log('\n—— isShapeMissing ——')
 for (const [input, expected] of clarifyCases) {
   const actual = isShapeMissing(input)
   console.log(`${actual === expected ? 'OK ' : 'FAIL'} "${input}" -> ${actual}（预期 ${expected}）`)
+}
+
+// 笔刷方向解析
+const brushCases: Array<[string, string]> = [
+  ['开始画线', 'start'],
+  ['开始画', 'start'],
+  ['自由画', 'start'],
+  ['停', 'stop'],
+  ['结束', 'stop'],
+  ['画完了', 'stop'],
+  ['好了', 'stop'],
+  ['算了', 'cancel'],
+  ['取消', 'cancel'],
+  ['不要了', 'cancel'],
+  ['往右', 'move'],
+  ['往左', 'move'],
+  ['往上', 'move'],
+  ['往下', 'move'],
+  ['往右移一点', 'move'],
+  ['往下移很多', 'move'],
+  ['往右上', 'move'],
+  ['往左下移', 'move'],
+  ['今天天气不错', 'null'],
+]
+console.log('\n—— parseBrushStep ——')
+for (const [input, expected] of brushCases) {
+  const result = parseBrushStep(input)
+  const actual = result?.kind ?? 'null'
+  const ok = actual === expected
+  console.log(`${ok ? 'OK ' : 'FAIL'} "${input}" -> ${actual}${!ok ? `（预期 ${expected}）` : ''}${result && result.kind === 'move' ? ` dfx=${result.dfx.toFixed(3)} dfy=${result.dfy.toFixed(3)}` : ''}`)
 }
