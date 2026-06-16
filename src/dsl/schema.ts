@@ -188,6 +188,13 @@ function validateProps(v: unknown): { ok: true; props: DrawProps } | { ok: false
     props.close = Boolean(v.close)
   }
 
+  if (v.tension !== undefined) {
+    if (typeof v.tension !== 'number' || !Number.isFinite(v.tension) || v.tension < 0 || v.tension > 1) {
+      return { ok: false, error: `非法曲线平滑度 tension（需 0~1）: ${String(v.tension)}` }
+    }
+    props.tension = v.tension
+  }
+
   return { ok: true, props }
 }
 

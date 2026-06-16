@@ -2,7 +2,7 @@
  * 规则解析引擎冒烟测试：node 环境直接跑，不依赖浏览器。
  * 用法：npx tsx scripts/parser-smoke.ts
  */
-import { isShapeMissing, parseBrushStep, parseCommand } from '../src/parser/rules'
+import { isShapeMissing, parseBrushStep, parseCommand, tryExpandTemplate } from '../src/parser/rules'
 
 const cases: Array<[string, string]> = [
   ['画一个圆', '基础'],
@@ -47,12 +47,8 @@ const cases: Array<[string, string]> = [
   ['放大到半径五十', '绝对大小'],
   ['画一个大一点的圆', '绘制优先于缩放'],
   ['把它放到中间', '移动不被缩放误中'],
-  // —— 语义模板 / 文本 / 改色 / 导出 / 回放（PR #13）——
-  ['画一个太阳', '模板-太阳'],
-  ['画一个大大的笑脸', '模板+大小'],
-  ['在左上角画一棵树', '模板+位置'],
-  ['画一个小人', '模板-"小人"的小不是大小'],
-  ['画一个房子，左边加一棵树，右上角有太阳', 'TC-P1-01 复合语义对象'],
+  // —— 文本 / 改色 / 导出 / 回放（PR #13；语义模板由下方 tryExpandTemplate 组覆盖，
+  //     parseCommand 本身不接管模板，故此处不列）——
   ['写上你好', '文本标注'],
   ['在中间写上完成', '文本+位置'],
   ['把这个圆变成蓝色', '改色-代词'],
@@ -117,4 +113,44 @@ for (const [input, expected] of brushCases) {
   const actual = result?.kind ?? 'null'
   const ok = actual === expected
   console.log(`${ok ? 'OK ' : 'FAIL'} "${input}" -> ${actual}${!ok ? `（预期 ${expected}）` : ''}${result && result.kind === 'move' ? ` dfx=${result.dfx.toFixed(3)} dfy=${result.dfy.toFixed(3)}` : ''}`)
+}
+
+// 指代消解 target 解析（feat/15）：空间/序数/比较限定词应被解析进 target，
+// 且与特征（shape/color）并存。过滤逻辑（executor.applyPostFilter）需画布，由 e2e 覆盖。
+const refCases: Array<[string, Record<string, unknown>]> = [
+  ['选中左边那个', { spatial: 'leftmost' }],
+  ['把最右边的变成蓝色', { spatial: 'rightmost' }],
+  ['放大第二个', { ordinal: 2 }],
+  ['删掉最大的', { comparison: 'largest' }],
+  ['选中最小的圆', { shape: 'circle', comparison: 'smallest' }],
+  ['选中第二个圆', { shape: 'circle', ordinal: 2 }],
+]
+console.log('\n—— 指代消解 target ——')
+for (const [input, expected] of refCases) {
+  const r = parseCommand(input)
+  const target = (r.matched && r.commands[0] ? (r.commands[0] as { target?: Record<string, unknown> }).target : undefined) ?? {}
+  const ok = Object.entries(expected).every(([k, v]) => target[k] === v)
+  console.log(`${ok ? 'OK ' : 'FAIL'} "${input}" -> ${JSON.stringify(target)}${ok ? '' : `（预期含 ${JSON.stringify(expected)}）`}`)
+}
+
+// 语义模板展开（feat/14 起为多 path 组合，非单 path）：仅 pipeline 在无 LLM 时调用。
+// 锁定命令数与"全部为 path draw"，模板改动需同步更新预期值。
+const tplCases: Array<[string, number | null]> = [
+  ['画一个太阳', 9], // 圆轮廓 1 + 光线 8
+  ['在左上角画一棵树', 2],
+  ['画一个小人', 6], // 头 + 身 + 四肢
+  ['画一个大大的笑脸', 4],
+  ['画一个房子，左边加一棵树，右上角有太阳', 12], // 复合：3 模板拆分承接
+  ['画一个圆', null], // 基础图形不应被模板接管
+]
+console.log('\n—— tryExpandTemplate ——')
+for (const [input, expected] of tplCases) {
+  const r = tryExpandTemplate(input)
+  const count = r.matched ? r.commands.length : null
+  const allPath = r.matched && r.commands.every((c) => {
+    const cmd = c as { action?: string; shape?: string }
+    return cmd.action === 'draw' && cmd.shape === 'path'
+  })
+  const ok = count === expected && (expected === null || allPath)
+  console.log(`${ok ? 'OK ' : 'FAIL'} "${input}" -> ${count === null ? 'MISS' : `${count} path`}${ok ? '' : `（预期 ${expected === null ? 'MISS' : expected + ' path'}）`}`)
 }

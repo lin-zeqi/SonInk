@@ -8,7 +8,7 @@ import { useSettingsStore } from './store/settings'
 import { validateDsl } from './dsl/schema'
 import { executeAll } from './dsl/executor'
 import type { DslCommand, DrawCommand } from './dsl/types'
-import { isShapeMissing, parseBrushStep, parseCommand, tryExpandTemplate } from './parser/rules'
+import { isShapeMissing, parseBrushStep, parseCommand } from './parser/rules'
 import { getCanvasSize, getMainLayer } from './canvas/stage'
 import { chat } from './llm/client'
 import { buildSystemPrompt } from './llm/prompt'
@@ -141,16 +141,22 @@ function runCommands(commands: DslCommand[]): string {
   return executeAll(commands).message
 }
 
-/** LLM 回复（JSON 字符串）→ 执行或追问 */
-function applyLlmReply(reply: string): string {
+type ApplyOutcome =
+  | { kind: 'done'; message: string }
+  | { kind: 'retry'; error: string }
+
+/**
+ * LLM 回复（JSON 字符串）→ 执行/追问，或返回可重试的解析/校验错误。
+ * retry 分支故意不 reset，以便保留会话上下文做带错误反馈的重试。
+ */
+function applyLlmReply(reply: string): ApplyOutcome {
   const assistant = useAssistantStore()
 
   let parsed: unknown
   try {
     parsed = JSON.parse(reply)
   } catch {
-    assistant.reset()
-    return 'AI 返回了无法解析的内容，请换个说法再试'
+    return { kind: 'retry', error: '返回内容不是合法 JSON' }
   }
 
   const obj = parsed as { ask?: unknown; commands?: unknown }
@@ -158,21 +164,20 @@ function applyLlmReply(reply: string): string {
   if (typeof obj.ask === 'string' && obj.ask) {
     if (assistant.askCount >= MAX_ASK_ROUNDS) {
       assistant.reset()
-      return 'AI 已追问多次仍无法确定指令，请换个简短说法再试'
+      return { kind: 'done', message: 'AI 已追问多次仍无法确定指令，请换个简短说法再试' }
     }
     assistant.finish(reply, obj.ask)
-    return '我需要补充一点信息（见提问框）'
+    return { kind: 'done', message: '我需要补充一点信息（见提问框）' }
   }
 
   const validation = validateDsl(obj.commands ?? parsed)
   if (!validation.ok) {
-    assistant.reset()
-    return `AI 输出的指令未通过校验：${validation.error}`
+    return { kind: 'retry', error: validation.error }
   }
 
   assistant.finish(reply)
   assistant.reset()
-  return runCommands(validation.commands)
+  return { kind: 'done', message: runCommands(validation.commands) }
 }
 
 async function runSlowPath(text: string, continuation: boolean): Promise<string> {
@@ -190,8 +195,27 @@ async function runSlowPath(text: string, continuation: boolean): Promise<string>
   command.setFeedback('AI 思考中…')
 
   try {
-    const reply = await chat(assistant.messages, cfg)
-    return applyLlmReply(reply)
+    let reply = await chat(assistant.messages, cfg)
+    let outcome = applyLlmReply(reply)
+
+    // 解析/校验失败：把模型上次输出与具体错误反馈回去，要求修正后重试一次。
+    // 较高温度（0.45）偶发格式抖动，这一步把"直接失败"变成"自我修正"。
+    if (outcome.kind === 'retry') {
+      assistant.messages.push({ role: 'assistant', content: reply })
+      assistant.messages.push({
+        role: 'user',
+        content: `你上一次的输出未通过校验：${outcome.error}。请严格修正后只输出合法 JSON：坐标一律用 {"fx":0~1,"fy":0~1} 比例值，闭合路径(close:true)必须带 fill，不同对象用不同 groupName。`,
+      })
+      command.setFeedback('AI 修正中…')
+      reply = await chat(assistant.messages, cfg)
+      outcome = applyLlmReply(reply)
+    }
+
+    if (outcome.kind === 'retry') {
+      assistant.reset()
+      return `AI 输出的指令未通过校验：${outcome.error}`
+    }
+    return outcome.message
   } catch (err) {
     assistant.reset()
     return `AI 调用失败：${err instanceof Error ? err.message : '未知错误'}`
@@ -284,11 +308,9 @@ async function handleText(text: string): Promise<string> {
     return '请补充想画的图形（见提问框）'
   }
 
-  // 内置模板始终本地展开（太阳/房子/树/雪人/小人/笑脸），无论是否配置 LLM
-  const templateResult = tryExpandTemplate(text)
-  if (templateResult.matched) return runCommands(templateResult.commands)
-
-  // LLM 未配置：模板已兜底，提示用户配置 AI 或换指令
+  // 基础形状（圆/方/三角/直线/文字/笔刷）已在上方规则引擎本地命中；
+  // 其余一切（太阳/房子/汽车等语义对象、任意复杂物体）一律交给 LLM 绘制。
+  // 未配置 Key 时本地无法绘制非基础形状，提示用户配置。
   if (!useSettingsStore().activeConfig.ready) {
     return '这条指令需要 AI 辅助，请先点击右上角"设置"选择大模型服务商并填入 API Key'
   }

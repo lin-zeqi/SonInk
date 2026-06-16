@@ -204,6 +204,7 @@ function createNode(cmd: DrawCommand, id: string): Konva.Shape {
         lineJoin: 'round',
         closed: close,
         fill: fillColor,
+        tension: cmd.props?.tension ?? 0,
         draggable: true,
       })
     }

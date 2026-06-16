@@ -13,7 +13,7 @@ npm run preview      # Preview production build locally
 npx tsx scripts/parser-smoke.ts          # Parser smoke test (no browser needed)
 ```
 
-`parser-smoke.ts` exercises the rule engine (`parseCommand`, `isShapeMissing`, `tryExpandTemplate`, clause splitting) directly in Node.js — no browser, no Konva, no LLM. Run it after any parser/lexicon/template change to catch regressions instantly. Requires `tsx` (TypeScript execute); available via `npx` without a local install.
+`parser-smoke.ts` exercises the rule engine (`parseCommand`, `isShapeMissing`, `parseBrushStep`, `tryExpandTemplate`, advanced-reference target parsing, clause splitting) directly in Node.js — no browser, no Konva, no LLM. The `isShapeMissing` / `parseBrushStep` / advanced-reference / `tryExpandTemplate` groups carry OK/FAIL assertions; the main `parseCommand` group only prints output for eyeballing. Run it after any parser/lexicon/template change to catch regressions instantly. Requires `tsx` (TypeScript execute); available via `npx` without a local install.
 
 E2E scripts use `puppeteer-core` driving local Edge. Run `npm run dev` first, then in another terminal:
 
@@ -28,7 +28,7 @@ node scripts/e2e-repro.mjs           # PR #6: select / move / delete / clause sp
 node scripts/e2e-anim.mjs            # PR #7: progressive draw animation
 ```
 
-All E2E scripts pass against the current working tree.
+Each e2e script is self-asserting: it injects commands through the live app, then verifies Konva node count / object-registry state (and saves a screenshot) for the feature it targets — see "E2E Testing Pattern" below.
 
 ## Architecture Overview
 
@@ -99,15 +99,16 @@ Microphone → recognizer.ts → pipeline.ts → parser/rules.ts (fast, ~50ms)
 
 ### Dual-Path Parsing (the most important architectural decision)
 
-1. **Fast path** (`parser/rules.ts`): Regex-based intent matching powered by synonym tables in `parser/lexicon.ts` (SHAPE_SYNONYMS, COLOR_SYNONYMS, POSITION_SYNONYMS, SIZE_SYNONYMS — each maps multiple Chinese terms to canonical values via `lookup()` and `normalize()`). Handles ~50 simple command patterns: draw, select, move, resize, delete, undo, style, clear, export, replay, text, background ("天空背景变为蓝色" → `background` DSL command). Also handles clause splitting (逗号/然后/接着/还有) for compound commands that don't need an LLM. The rule engine is purely functional (`ParseResult` return type) — it doesn't touch the canvas or stores directly.
+1. **Fast path** (`parser/rules.ts`): Regex-based intent matching powered by synonym tables in `parser/lexicon.ts` (SHAPE_SYNONYMS, COLOR_SYNONYMS, POSITION_SYNONYMS, SIZE_SYNONYMS — each maps multiple Chinese terms to canonical values via `lookup()` and `normalize()`). Handles ~50 simple command patterns: draw, select, move, resize, delete, undo, style, clear, export, replay, text, background ("天空背景变为蓝色" → `background` DSL command), and free-brush direction steps (`parseBrushStep` — start/step/stop/cancel). Also handles clause splitting (逗号/然后/接着/还有) for compound commands that don't need an LLM. The rule engine is purely functional (`ParseResult` return type) — it doesn't touch the canvas or stores directly.
 
 2. **Slow path** (`llm/client.ts` + `llm/prompt.ts`): OpenAI-compatible chat/completions call. Used when the rule engine misses or detects it can't handle the utterance. The prompt teaches the LLM to output `path`-based draw commands with `groupName` for multi-part objects — not discrete shapes.
 
-The rule engine also has two local fallbacks _before_ hitting LLM:
+The rule engine has one local fallback _before_ hitting LLM:
 - **Shape-missing追问** (`isShapeMissing()`): "画一个" with no shape word → asks "想画什么图形?" locally, saving an LLM call.
-- **Semantic templates** (`parser/templates.ts`): 太阳/房子/树/雪人/小人/笑脸 are expanded to `path` commands locally without LLM. `expandTemplate()` returns a `ParseResult` with a single `DrawCommand` containing a `points` array of `{fx, fy}` coordinates and appropriate `fill`/`close` flags.
 
-**Smart routing** (feat/14): When LLM is configured, semantic templates (太阳/房子/树…) are routed to the LLM rather than the local template engine — the LLM produces richer, more varied output. Local template expansion only kicks in as a fallback when no LLM key is configured, preserving offline demo capability.
+**Drawing routing — basic shapes local, everything else LLM** (current behavior): Only the basic shapes the rule engine matches directly (圆/矩形/三角/直线/文字, plus free-brush paths) are drawn locally. **Every other draw intent — 太阳/房子/汽车 and any complex/semantic object — goes to the LLM.** If no API key is configured, those utterances return a "请先配置 AI" message instead of drawing (no offline template fallback). `parseCommand` itself returns MISS for template words like "太阳", so they flow straight to `runSlowPath`.
+
+> The local template engine (`parser/templates.ts` `expandTemplate` / `tryExpandTemplate`) is **no longer wired into the pipeline** — it lingers only as a library function (still exercised by `parser-smoke.ts`). `lookupTemplate` is still used by `rules.ts` to recognize template words as a `groupName` for editing existing objects ("把太阳移到左边").
 
 #### Pipeline State Machine (the most complex orchestration)
 
@@ -118,10 +119,14 @@ The rule engine also has two local fallbacks _before_ hitting LLM:
 3. **Confirm wait**: If `assistant.confirm` is set (clear-canvas confirmation pending), the input is tested against CONFIRM_YES/CANCEL patterns. If neither, it falls through as a new command (abandoning the pending clear).
 4. **Clarify wait**: If `assistant.clarify` is set (shape-missing追问), the input is prepended with "画" and re-parsed as a draw command. Cancel works too.
 5. **Ask wait**: If `assistant.ask` is set (LLM asked a follow-up question), the input is treated as a continuation of the LLM conversation (`runSlowPath(text, true)`).
-6. **Rule match**: Try `parseCommand(text)`. If matched, execute directly.
-7. **Shape-missing check**: If the text looks like a draw intent without a shape word, enter the clarify state.
-8. **Template fallback**: If no LLM is configured, try `tryExpandTemplate(text)` as a last local resort.
-9. **LLM slow path**: If LLM is configured, call `runSlowPath(text, false)`.
+6. **Brush active**: If `brushActive` (free-brush mode entered), input is parsed by `parseBrushStep()` only — direction words (`往右/往下/往左/往上` and diagonals/step-size) extend the live stroke, `停` finalizes via `finishBrush()` → `executeAll`, `取消` aborts. All other commands are blocked while brushing.
+7. **Brush start**: `parseBrushStep(text)` with `kind:'start'` (e.g. "开始画线") enters brush mode via `startBrush()`.
+8. **Rule match**: Try `parseCommand(text)`. If matched, execute directly.
+9. **Shape-missing check**: If the text looks like a draw intent without a shape word, enter the clarify state.
+10. **No-LLM guard**: If no API key is configured, return a "请先配置 AI" message (basic shapes already matched at step 8; anything reaching here needs the LLM).
+11. **LLM slow path**: Call `runSlowPath(text, false)` — all non-basic draw intents (太阳/房子/汽车/…) land here.
+
+The free-brush state machine lives entirely in `pipeline.ts` module-scope (`brushActive`, `brushLine`, `brushPoints`, `brushColor`): a temporary `Konva.Line` is mutated in real time on each direction step for live preview, then on `停` it is destroyed and re-created as a normal `path` draw command through `executeAll` so it gets the full snapshot/history/stroke-animation treatment.
 
 This state-machine ordering means a single utterance can trigger confirmation, clarification, rule execution, or LLM delegation — and the user never explicitly "switches modes."
 
@@ -134,15 +139,15 @@ Key constraints enforced by `dsl/schema.ts` (runtime validation):
 - Positions are **0–1 proportional coordinates** (`fx`, `fy`) or nine-grid semantic labels. Absolute pixel coordinates are rejected. This prevents LLM hallucination of pixel values.
 - Colors must be `#hex` format (3/6/8 digits). Named colors like "red" are rejected — the rule engine's `lexicon.ts` converts Chinese color names to hex before they become DSL.
 - Every action has required fields enforced: `draw` requires valid `shape` (and `text` for text shapes, `points` for path shapes); `move` requires `direction`/`position`/`relativeTo`; `resize` requires `scale` or `size`; `style` requires `color`.
-- Path `points` arrays must have at least 2 entries; each point must be a valid `{fx, fy}` fraction.
+- Path `points` arrays must have at least 2 entries; each point must be a valid `{fx, fy}` fraction. Optional `tension` (0–1) renders the path as a smoothed curve instead of straight segments (used for round forms with few points).
 - All semantic→pixel conversion happens in `dsl/executor.ts` only.
 
-### Path-Based Composition (feat/14-canvas-power — current working tree)
+### Path-Based Composition (feat/14)
 
-The most significant architectural shift: **semantic objects are no longer assembled from discrete shapes** (circle + triangle + line). Instead, a single `path` shape draws an entire silhouette as one continuous polyline via `Konva.Line`, using proportional coordinate points `[{fx, fy}, ...]`.
+The most significant architectural shift: **semantic objects are no longer assembled from discrete primitives** (circle + triangle + line). Instead they are drawn as `path` shapes — each a `Konva.Line` over proportional coordinate points `[{fx, fy}, ...]`. A composite object is **several paths sharing one `groupName`** (see the group model below), one stroke per meaningful part.
 
 This applies to both:
-- **Local templates** (`parser/templates.ts`): 太阳/房子/树/雪人/小人/笑脸 are each a single path draw command (e.g., stickman is 34 points drawn in one stroke).
+- **Local templates** (`parser/templates.ts`): 太阳/房子/树/雪人/小人/笑脸 are each expanded to **several `path` draws sharing one `groupName`**, one stroke per meaningful part (stickman = head + body + 4 limbs = 6 strokes; 太阳 = circle outline + 8 rays = 9).
 - **LLM output** (`llm/prompt.ts`): The prompt teaches the model to compose complex objects as **multiple paths sharing a `groupName`** — one path per part (car body, wheels, windows), all bound by the same `groupName`. Closed paths should include `fill` for proper coloring; the fill fades in after the stroke animation completes.
 
 **groupName / groupId / part model**:
@@ -151,11 +156,18 @@ This applies to both:
 - `part`: Optional role label like "屋顶", "车轮" — enables fine-grained targeting ("删掉房子的屋顶" → `groupName:"房子"` + `part:"屋顶"`).
 - `resolveTarget()` handles `groupName`/`part` lookups before individual feature matching.
 
-**Group-level operations** (new in working tree): `execMove` and `execResize` no longer block on multi-match — they compute the bounding box of all matched nodes and transform the entire group. "把太阳移到左边" moves all paths sharing `groupName:"太阳"` together.
+**Advanced reference resolution** (feat/15, in `dsl/executor.ts`): When a `target` carries a `spatial`, `ordinal`, or `comparison` qualifier (parsed in `rules.ts` from SPATIAL_QUALIFIERS / ORDINAL_PATTERN / comparison terms), `resolveTarget` widens the candidate set to *all* objects, then filters down to one:
+- `spatial` ("左边那个" → `leftmost`/`rightmost`/`topmost`/`bottommost`/`center`): scores each node's bounding-box center and keeps the extreme.
+- `ordinal` ("第二个"): sorts by `seq` (creation order, 1-based) and picks the nth.
+- `comparison` ("最大的"/"最小的" → `largest`/`smallest`): sorts by bounding-box area.
+
+These run in `applyPostFilter` after feature matching (shape/color). **Caveat**: if feature matching already narrowed to ≤1 object, the filter *discards* that match set and widens back to all objects (so "选中左边那个" works with no shape word). Consequence: "最大的红色的圆" only respects the color/shape constraint when ≥2 red circles exist — with a single red circle, the constraint is dropped and the largest object overall is chosen. A `ref` pronoun (它/这个/那个) skips post-filtering entirely.
+
+**Group-level operations**: `execMove` and `execResize` no longer block on multi-match — they compute the bounding box of all matched nodes and transform the entire group. "把太阳移到左边" moves all paths sharing `groupName:"太阳"` together.
 
 **autoCompact** (`executor.ts`): LLM-generated coordinates often spread too wide. Before execution, `autoCompact` measures the horizontal span of all draw commands in a batch — if spread > 35% of canvas width, it compresses toward center to 30%, preserving relative proportions.
 
-**Coordinate system change** (working tree): Nine-grid positions widened from [0.2, 0.5, 0.8] to [0.33, 0.5, 0.67], and size fractions increased (small 0.05→0.07, medium 0.09→0.13, large 0.15→0.20) for better visual weight.
+**Coordinate system**: Nine-grid positions are [0.33, 0.5, 0.67] (widened from an earlier [0.2, 0.5, 0.8]); size fractions are small 0.07 / medium 0.13 / large 0.20, tuned up for better visual weight.
 
 ### executeAll Transaction Flow
 
@@ -237,6 +249,8 @@ Shortcuts are suppressed when focus is in an `<input>` or `<textarea>`.
 Users configure their own API key per provider in the Settings panel (stored in `localStorage`, never in code). Presets for DeepSeek, Kimi, GLM, Qwen, plus a custom OpenAI-compatible endpoint. All use the same `/chat/completions` protocol with `response_format: json_object`.
 
 **Canvas memory** (feat/14): Before every LLM call, `pipeline.ts` refreshes the system prompt (`buildSystemPrompt()`) with the current canvas state — every object's shape, color, fx/fy coordinates, groupName, and part. This gives the LLM spatial awareness of what's already drawn, enabling it to place new objects relative to existing ones and understand "把那个人放大" correctly.
+
+**Output richness & robustness**: The system prompt pushes for *detailed* output — a four-step "observe → compose → layer details → stroke" flow, an explicit budget of 8–18 paths for complex objects, layered same-hue fills for depth, and full-canvas scene layout (background first, far objects high / near low). Paths support optional `tension` so round forms (heads, wheels, clouds) need only 5–8 points. `temperature` is 0.45 (client.ts) for variety; to absorb the extra format jitter, `runSlowPath` does **one feedback retry** — on a JSON-parse or `validateDsl` failure it appends the bad reply + the exact error back into the conversation and asks the model to self-correct before giving up.
 
 ### E2E Testing Pattern
 

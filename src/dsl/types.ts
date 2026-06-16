@@ -92,6 +92,9 @@ export interface DrawProps {
   fill?: string
   /** 仅 shape=path 有效：是否闭合路径（连接终点回起点） */
   close?: boolean
+  /** 仅 shape=path 有效：曲线平滑度 0~1（0=直角折线，0.3~0.5=圆润曲线）。
+   *  用更少的点画出平滑形体（头、车轮、云、花瓣等），省略时默认 0 */
+  tension?: number
 }
 
 export interface DrawCommand {
