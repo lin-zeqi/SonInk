@@ -7,6 +7,8 @@ export interface CommandEntry {
   id: number
   text: string
   source: CommandSource
+  /** 执行结果反馈，管道执行完成后回填（历史面板展示） */
+  result?: string
 }
 
 /**
@@ -22,8 +24,20 @@ export const useCommandStore = defineStore('command', {
     history: [] as CommandEntry[],
     listenState: 'idle' as ListenState,
     speechSupported: true,
+    ttsEnabled: true,
+    historyOpen: false,
   }),
   actions: {
+    setResult(id: number, result: string) {
+      const entry = this.history.find((e) => e.id === id)
+      if (entry) entry.result = result
+    },
+    toggleTts() {
+      this.ttsEnabled = !this.ttsEnabled
+    },
+    toggleHistory() {
+      this.historyOpen = !this.historyOpen
+    },
     setInterim(text: string) {
       this.interim = text
     },

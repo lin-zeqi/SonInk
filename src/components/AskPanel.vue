@@ -1,15 +1,32 @@
 <script setup lang="ts">
 import { useAssistantStore } from '../store/assistant'
+import { useCommandStore } from '../store/command'
 
 const assistant = useAssistantStore()
+const command = useCommandStore()
 
 function cancel() {
   assistant.reset()
 }
+
+// 确认/取消按钮提交文本走指令管道，与语音回答完全同路径
+function answer(text: string) {
+  command.submit(text, 'ui')
+}
 </script>
 
 <template>
-  <div v-if="assistant.ask" class="ask-overlay">
+  <div v-if="assistant.confirm" class="ask-overlay">
+    <div class="ask-panel">
+      <div class="ask-title warn">需要确认</div>
+      <div class="ask-question confirm-question">{{ assistant.confirm }}</div>
+      <div class="ask-actions">
+        <button class="confirm-yes" @click="answer('确认')">确认</button>
+        <button class="ask-cancel" @click="answer('取消')">取消</button>
+      </div>
+    </div>
+  </div>
+  <div v-else-if="assistant.ask" class="ask-overlay">
     <div class="ask-panel">
       <div class="ask-title">AI 想确认一下</div>
       <div class="ask-question">{{ assistant.ask }}</div>
@@ -46,6 +63,30 @@ function cancel() {
   font-size: 13px;
   color: #8be9fd;
   margin-bottom: 8px;
+}
+
+.ask-title.warn {
+  color: #ffb86c;
+}
+
+.ask-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.confirm-yes {
+  padding: 4px 16px;
+  border: 1px solid #ffb86c;
+  border-radius: 14px;
+  background: transparent;
+  color: #ffb86c;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ask-actions .ask-cancel {
+  margin-top: 0;
 }
 
 .ask-question {

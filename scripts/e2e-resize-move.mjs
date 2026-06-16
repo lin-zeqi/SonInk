@@ -86,7 +86,8 @@ s = await node()
 check('撤销缩放恢复原宽', Math.abs(s.width - before.width) < 1, `宽=${s.width}`)
 
 // —— 5. 圆形缩放（按半径） ——
-await send('清空画布')
+await send('清空画布') // PR #11 起需要二次确认
+await send('确认')
 await send('画一个半径五十的红色圆')
 await send('缩小一半')
 s = await node()
@@ -103,7 +104,8 @@ s = await node(1)
 check('直线 scale 缩放', s?.cls === 'Line' && Math.abs(s.scaleX - 2) < 0.01, `scaleX=${s?.scaleX}`)
 
 // —— 7. 多匹配拒绝缩放 ——
-await send('清空画布')
+await send('清空画布') // PR #11 起需要二次确认
+await send('确认')
 await send('画一个红色的圆和一个蓝色的圆')
 await send('把圆放大')
 const fb = await feedback()

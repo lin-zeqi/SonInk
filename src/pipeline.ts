@@ -1,11 +1,14 @@
 import { watch } from 'vue'
 import { useCommandStore } from './store/command'
 import { useAssistantStore } from './store/assistant'
+import { useObjectsStore } from './store/objects'
 import { useSettingsStore } from './store/settings'
 import { validateDsl } from './dsl/schema'
 import { executeAll } from './dsl/executor'
+import type { DslCommand } from './dsl/types'
 import { parseCommand } from './parser/rules'
 import { chat } from './llm/client'
+import { speak } from './speech/tts'
 
 /**
  * 指令处理管道：订阅指令流中枢，把文本送往解析与执行。
@@ -18,6 +21,25 @@ import { chat } from './llm/client'
  */
 
 const CANCEL_PATTERN = /取消|算了|不用了|不画了/
+
+const CONFIRM_YES_PATTERN = /确认|确定|是的|没错|好/
+
+/** 等待确认的指令序列（清空画布二次确认） */
+let pendingCommands: DslCommand[] | null = null
+
+/**
+ * 执行指令序列入口：破坏性操作（画布非空时的清空）先二次确认，
+ * 其余直接执行。复合指令含清空时整个序列一起暂存、确认后一起执行。
+ */
+function runCommands(commands: DslCommand[]): string {
+  const hasClear = commands.some((c) => c.action === 'clear')
+  if (hasClear && useObjectsStore().objects.length > 0) {
+    pendingCommands = commands
+    useAssistantStore().setConfirm('确定要清空画布吗？说"确认"继续，说"取消"放弃')
+    return '清空画布需要确认（见提示框）'
+  }
+  return executeAll(commands).message
+}
 
 /** LLM 回复（JSON 字符串）→ 执行或追问 */
 function applyLlmReply(reply: string): string {
@@ -46,7 +68,7 @@ function applyLlmReply(reply: string): string {
 
   assistant.finish(reply)
   assistant.reset()
-  return executeAll(validation.commands).message
+  return runCommands(validation.commands)
 }
 
 async function runSlowPath(text: string, continuation: boolean): Promise<string> {
@@ -81,10 +103,24 @@ async function handleText(text: string): Promise<string> {
     }
     const validation = validateDsl(parsed)
     if (!validation.ok) return `指令无效：${validation.error}`
-    return executeAll(validation.commands).message
+    return runCommands(validation.commands)
   }
 
   const assistant = useAssistantStore()
+
+  // 清空确认等待中：确认词执行暂存指令，取消词放弃，其他输入视为新指令
+  if (assistant.confirm) {
+    assistant.setConfirm('')
+    const stash = pendingCommands
+    pendingCommands = null
+    if (CANCEL_PATTERN.test(text) || /不/.test(text)) {
+      return '好的，已取消'
+    }
+    if (CONFIRM_YES_PATTERN.test(text) && stash) {
+      return executeAll(stash).message
+    }
+    // 落到下方按普通指令处理
+  }
 
   // 追问等待中：本次输入是对 AI 问题的回答（取消词除外）
   if (assistant.ask) {
@@ -97,7 +133,7 @@ async function handleText(text: string): Promise<string> {
 
   const ruleResult = parseCommand(text)
   if (ruleResult.matched) {
-    return executeAll(ruleResult.commands).message
+    return runCommands(ruleResult.commands)
   }
 
   return runSlowPath(text, false)
@@ -109,7 +145,15 @@ export function setupPipeline(): void {
     () => store.lastCommand,
     (cmd) => {
       if (!cmd) return
-      void handleText(cmd.text).then((msg) => store.setFeedback(msg))
+      void handleText(cmd.text).then((msg) => {
+        store.setFeedback(msg)
+        store.setResult(cmd.id, msg)
+        if (store.ttsEnabled) {
+          // 追问/确认时播报问题本身，比"见提示框"对纯语音交互更有用
+          const assistant = useAssistantStore()
+          speak(assistant.ask || assistant.confirm || msg)
+        }
+      })
     }
   )
 }
