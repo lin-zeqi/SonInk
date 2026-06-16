@@ -3,12 +3,16 @@ import { onMounted, ref } from 'vue'
 import { initStage } from './canvas/stage'
 import { createRecognizer, isSpeechSupported, type Recognizer } from './speech/recognizer'
 import { useCommandStore } from './store/command'
+import { useSettingsStore } from './store/settings'
 import { setupPipeline } from './pipeline'
 import CaptionBar from './components/CaptionBar.vue'
 import DebugInput from './components/DebugInput.vue'
+import AskPanel from './components/AskPanel.vue'
+import SettingsPanel from './components/SettingsPanel.vue'
 
 const canvasContainer = ref<HTMLDivElement | null>(null)
 const store = useCommandStore()
+const settings = useSettingsStore()
 let recognizer: Recognizer | null = null
 
 onMounted(() => {
@@ -48,8 +52,11 @@ function toggleListen() {
         {{ store.listenState === 'listening' ? '● 聆听中（点击停止）' : '○ 开始聆听' }}
       </button>
       <span v-else class="status warn">当前浏览器不支持语音识别，请使用 Edge，或用右下角调试输入</span>
+      <button class="settings-btn" @click="settings.togglePanel()">设置</button>
     </header>
     <main ref="canvasContainer" class="canvas-container"></main>
+    <SettingsPanel />
+    <AskPanel />
     <CaptionBar />
     <DebugInput />
   </div>
@@ -89,6 +96,17 @@ function toggleListen() {
 .mic-btn.active {
   border-color: #50fa7b;
   color: #50fa7b;
+}
+
+.settings-btn {
+  margin-left: auto;
+  padding: 6px 14px;
+  border: 1px solid #555;
+  border-radius: 16px;
+  background: transparent;
+  color: #a0a0b8;
+  font-size: 13px;
+  cursor: pointer;
 }
 
 .status {

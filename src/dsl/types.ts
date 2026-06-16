@@ -22,13 +22,26 @@ export type SemanticPosition =
   | 'bottom'
   | 'bottom-right'
 
+/**
+ * 画布比例坐标（0~1，fx 横向、fy 纵向）。
+ * 九宫格粒度不足以摆放组合图形（LLM 拆解"画一个人"等场景），
+ * 比例坐标分辨率无关、不给 LLM 像素幻觉空间——像素坐标仍然禁止。
+ */
+export interface PositionFraction {
+  fx: number
+  fy: number
+}
+
 export interface DrawProps {
   /** 十六进制颜色，省略时使用默认色 */
   color?: string
   /** 语义大小，或绝对像素值（圆=半径，方/三角=外接半径） */
   size?: SemanticSize | number
   /** 省略时默认画布中心附近随机偏移，避免重叠 */
-  position?: SemanticPosition
+  position?: SemanticPosition | PositionFraction
+  /** 仅直线有效：起止点比例坐标，缺省时画水平线 */
+  from?: PositionFraction
+  to?: PositionFraction
 }
 
 export interface DrawCommand {

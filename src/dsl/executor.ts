@@ -12,6 +12,7 @@ import {
   type DrawCommand,
   type ExecResult,
   type MoveCommand,
+  type PositionFraction,
   type SelectCommand,
   type SemanticPosition,
   type SemanticSize,
@@ -61,8 +62,13 @@ const DIRECTION_VECTORS: Record<Direction, [number, number]> = {
 
 let nextId = 1
 
-function resolvePosition(position: SemanticPosition | undefined): { x: number; y: number } {
+function resolvePosition(
+  position: SemanticPosition | PositionFraction | undefined
+): { x: number; y: number } {
   const { width, height } = getCanvasSize()
+  if (typeof position === 'object') {
+    return { x: width * position.fx, y: height * position.fy }
+  }
   if (position) {
     const [fx, fy] = POSITION_FRACTIONS[position]
     return { x: width * fx, y: height * fy }
@@ -109,14 +115,22 @@ function createNode(cmd: DrawCommand, id: string): Konva.Shape {
         stroke: color,
         strokeWidth: 3,
       })
-    case 'line':
+    case 'line': {
+      const { from, to } = cmd.props ?? {}
+      const { width, height } = getCanvasSize()
+      // 指定起止点（LLM 组合图形场景）优先；否则按位置画水平线
+      const points =
+        from && to
+          ? [width * from.fx, height * from.fy, width * to.fx, height * to.fy]
+          : [x - r * 1.5, y, x + r * 1.5, y]
       return new Konva.Line({
         id,
-        points: [x - r * 1.5, y, x + r * 1.5, y],
+        points,
         stroke: color,
         strokeWidth: 4,
         lineCap: 'round',
       })
+    }
   }
 }
 

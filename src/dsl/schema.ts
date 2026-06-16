@@ -5,6 +5,7 @@ import {
   SEMANTIC_POSITIONS,
   type DslCommand,
   type DrawProps,
+  type PositionFraction,
   type TargetSpec,
 } from './types'
 
@@ -22,6 +23,18 @@ export type ValidationResult =
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
+
+function isFraction(v: unknown): v is PositionFraction {
+  return (
+    isRecord(v) &&
+    typeof v.fx === 'number' &&
+    typeof v.fy === 'number' &&
+    v.fx >= 0 &&
+    v.fx <= 1 &&
+    v.fy >= 0 &&
+    v.fy <= 1
+  )
 }
 
 function validateProps(v: unknown): { ok: true; props: DrawProps } | { ok: false; error: string } {
@@ -51,10 +64,25 @@ function validateProps(v: unknown): { ok: true; props: DrawProps } | { ok: false
   }
 
   if (v.position !== undefined) {
-    if (!SEMANTIC_POSITIONS.includes(v.position as never)) {
-      return { ok: false, error: `非法位置: ${String(v.position)}` }
+    if (typeof v.position === 'string') {
+      if (!SEMANTIC_POSITIONS.includes(v.position as never)) {
+        return { ok: false, error: `非法位置: ${String(v.position)}` }
+      }
+      props.position = v.position as DrawProps['position']
+    } else if (isFraction(v.position)) {
+      props.position = { fx: v.position.fx, fy: v.position.fy }
+    } else {
+      return { ok: false, error: '非法位置：需为九宫格语义值或 0~1 比例坐标 {fx, fy}' }
     }
-    props.position = v.position as DrawProps['position']
+  }
+
+  for (const key of ['from', 'to'] as const) {
+    if (v[key] !== undefined) {
+      if (!isFraction(v[key])) {
+        return { ok: false, error: `非法${key === 'from' ? '起点' : '终点'}：需为 0~1 比例坐标 {fx, fy}` }
+      }
+      props[key] = { fx: (v[key] as PositionFraction).fx, fy: (v[key] as PositionFraction).fy }
+    }
   }
 
   return { ok: true, props }

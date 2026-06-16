@@ -6,3 +6,4 @@ dist/
 .DS_Store
 scripts/e2e-repro.png
 scripts/e2e-anim-final.png
+scripts/e2e-llm.png
