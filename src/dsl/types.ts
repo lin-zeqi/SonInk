@@ -81,6 +81,15 @@ export interface MoveCommand {
   position?: SemanticPosition
 }
 
+export interface ResizeCommand {
+  action: 'resize'
+  target?: TargetSpec
+  /** 相对缩放倍数（>1 放大，<1 缩小），与 size 二选一 */
+  scale?: number
+  /** 绝对大小：目标半径像素（圆=半径，方/三角=外接半径；直线不适用） */
+  size?: number
+}
+
 export interface DeleteCommand {
   action: 'delete'
   target?: TargetSpec
@@ -103,6 +112,7 @@ export type DslCommand =
   | DrawCommand
   | SelectCommand
   | MoveCommand
+  | ResizeCommand
   | DeleteCommand
   | ClearCommand
   | UndoCommand

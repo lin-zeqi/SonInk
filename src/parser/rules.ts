@@ -1,4 +1,11 @@
-import type { Direction, DrawProps, DslCommand, MoveCommand, TargetSpec } from '../dsl/types'
+import type {
+  Direction,
+  DrawProps,
+  DslCommand,
+  MoveCommand,
+  ResizeCommand,
+  TargetSpec,
+} from '../dsl/types'
 import {
   COLOR_SYNONYMS,
   POSITION_SYNONYMS,
@@ -39,6 +46,11 @@ const SELECT_PATTERN = /选中|选择|选取|选/
 const MOVE_TO_PATTERN = /[移挪放][到在]/
 
 const MOVE_PATTERN = /移动|挪|移|放[到在]/
+
+/** 缩放："放大"不会误中移动（MOVE_TO 要求"放到/放在"） */
+const RESIZE_PATTERN = /放大|缩小|变大|变小|调大|调小|大一点|大一些|小一点|小一些/
+
+const ENLARGE_PATTERN = /放大|变大|调大|大一点|大一些/
 
 const LAST_REF_PATTERN = /刚才|刚刚|上一个|最后/
 
@@ -155,6 +167,35 @@ function parseMove(text: string): ParseResult {
   return { matched: true, commands: [cmd] }
 }
 
+function parseResize(text: string): ParseResult {
+  const cmd: ResizeCommand = { action: 'resize' }
+  const target = extractTarget(text)
+  if (hasTarget(target)) cmd.target = target
+
+  // 绝对大小："放大到半径五十"
+  const absolute = text.match(ABSOLUTE_SIZE_PATTERN)
+  if (absolute) {
+    const value = parseNumber(absolute[1])
+    if (value !== null && value > 0) {
+      cmd.size = value
+      return { matched: true, commands: [cmd] }
+    }
+  }
+
+  const enlarge = ENLARGE_PATTERN.test(text)
+  if (/一倍/.test(text)) {
+    // 口语中"放大一倍"= 2 倍，"缩小一倍"= 一半
+    cmd.scale = enlarge ? 2 : 0.5
+  } else if (/一半/.test(text)) {
+    cmd.scale = 0.5
+  } else if (/一点点|一点|一些/.test(text)) {
+    cmd.scale = enlarge ? 1.25 : 0.8
+  } else {
+    cmd.scale = enlarge ? 1.5 : 0.67
+  }
+  return { matched: true, commands: [cmd] }
+}
+
 /**
  * 解析单个子句。
  * 意图判定顺序有讲究：
@@ -188,6 +229,10 @@ function parseSingle(raw: string): ParseResult {
 
   if (DRAW_VERB_PATTERN.test(text) && lookup(text, SHAPE_SYNONYMS) !== undefined) {
     return parseDraw(text)
+  }
+
+  if (RESIZE_PATTERN.test(text)) {
+    return parseResize(text)
   }
 
   if (MOVE_PATTERN.test(text)) {

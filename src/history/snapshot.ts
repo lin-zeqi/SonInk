@@ -22,6 +22,21 @@ export interface Snapshot {
   selectedIds: string[]
 }
 
+/**
+ * 过渡动画（移动/缩放）的待定终态：动画异步进行，快照若直接读节点属性
+ * 会拿到中间值。执行引擎启动动画时登记终态属性，动画结束后清除；
+ * 快照捕获时用终态覆盖中间值——几何终态在指令执行时即确定，动画纯视觉。
+ */
+const pendingAttrs = new Map<string, Record<string, number>>()
+
+export function setPendingAttrs(id: string, attrs: Record<string, number>): void {
+  pendingAttrs.set(id, { ...(pendingAttrs.get(id) ?? {}), ...attrs })
+}
+
+export function clearPendingAttrs(id: string): void {
+  pendingAttrs.delete(id)
+}
+
 export function captureSnapshot(): Snapshot {
   const store = useObjectsStore()
   const metaById = new Map(store.objects.map((o) => [o.id, o] as const))
@@ -37,6 +52,8 @@ export function captureSnapshot(): Snapshot {
       delete attrs.dashOffset
       const meta = metaById.get(String(attrs.id))
       if (meta && meta.shape !== 'line') attrs.fill = meta.color
+      const pending = pendingAttrs.get(String(attrs.id))
+      if (pending) Object.assign(attrs, pending)
       return { className: serialized.className, attrs }
     })
 
@@ -48,6 +65,9 @@ export function captureSnapshot(): Snapshot {
 }
 
 export function restoreSnapshot(snapshot: Snapshot): void {
+  // 旧节点连同进行中的动画一起作废，待定终态全部失效
+  pendingAttrs.clear()
+
   // 深拷贝去除 pinia 响应式代理，避免 Konva 持有 store 内部对象
   const plain: Snapshot = JSON.parse(JSON.stringify(snapshot))
 

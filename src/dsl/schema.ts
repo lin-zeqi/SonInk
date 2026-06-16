@@ -174,6 +174,29 @@ function validateOne(v: unknown): { ok: true; command: DslCommand } | { ok: fals
         },
       }
     }
+    case 'resize': {
+      const t = validateTarget(v.target)
+      if (!t.ok) return t
+
+      let scale: number | undefined
+      if (v.scale !== undefined) {
+        if (typeof v.scale !== 'number' || !Number.isFinite(v.scale) || v.scale <= 0) {
+          return { ok: false, error: `非法缩放倍数: ${String(v.scale)}` }
+        }
+        scale = v.scale
+      }
+      let size: number | undefined
+      if (v.size !== undefined) {
+        if (typeof v.size !== 'number' || !Number.isFinite(v.size) || v.size <= 0) {
+          return { ok: false, error: `非法大小: ${String(v.size)}` }
+        }
+        size = v.size
+      }
+      if (scale === undefined && size === undefined) {
+        return { ok: false, error: '缩放指令缺少倍数或目标大小' }
+      }
+      return { ok: true, command: { action: 'resize', target: t.target, scale, size } }
+    }
     case 'delete': {
       const t = validateTarget(v.target)
       if (!t.ok) return t

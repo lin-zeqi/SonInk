@@ -23,6 +23,7 @@ props 可用字段：
 
 其他指令：
 {"action":"select","target":{...}} 选中；{"action":"move",...} 移动；
+{"action":"resize","target":{...},"scale":1.5} 缩放（scale 为倍数，>1 放大 <1 缩小；或用 "size" 指定目标半径像素，直线只支持 scale）；
 {"action":"delete","target":{...}} 删除；{"action":"clear"} 清空；
 {"action":"undo"} 撤销上一次操作；{"action":"redo"} 重做。
 target 字段：ref("last"=刚画的|"selected"=当前选中)、shape、color。
