@@ -17,6 +17,7 @@ export interface CanvasObject {
 export const useObjectsStore = defineStore('objects', {
   state: () => ({
     objects: [] as CanvasObject[],
+    selectedIds: [] as string[],
     nextSeq: 1,
   }),
   actions: {
@@ -25,9 +26,17 @@ export const useObjectsStore = defineStore('objects', {
     },
     remove(id: string) {
       this.objects = this.objects.filter((o) => o.id !== id)
+      this.selectedIds = this.selectedIds.filter((sid) => sid !== id)
+    },
+    setSelection(ids: string[]) {
+      this.selectedIds = ids
     },
     clear() {
       this.objects = []
+      this.selectedIds = []
     },
+  },
+  getters: {
+    selectedObjects: (s) => s.objects.filter((o) => s.selectedIds.includes(o.id)),
   },
 })

@@ -4,3 +4,4 @@ dist/
 .vscode/
 *.local
 .DS_Store
+scripts/e2e-repro.png

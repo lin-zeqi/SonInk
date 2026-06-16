@@ -1,4 +1,4 @@
-import type { DrawProps, DslCommand } from '../dsl/types'
+import type { Direction, DrawProps, DslCommand, MoveCommand, TargetSpec } from '../dsl/types'
 import {
   COLOR_SYNONYMS,
   POSITION_SYNONYMS,
@@ -21,7 +21,30 @@ const MISS: ParseResult = { matched: false }
 
 const CLEAR_PATTERN = /清空|清除|全部删除|重新开始|擦掉所有/
 
-const DRAW_VERB_PATTERN = /画|绘|来|加|添|整/
+const DRAW_VERB_PATTERN = /画|绘|来|加|添|整|生成|创建/
+
+const DELETE_PATTERN = /删掉|删除|去掉|移除|擦掉|删/
+
+/** 复合指令连接词与子句分隔符 */
+const CLAUSE_SPLITTER = /[，,。；;]|然后|接着|以及|还有|和/
+
+const SELECT_PATTERN = /选中|选择|选取|选/
+
+/** "移到/放在/挪到"——绝对位置移动 */
+const MOVE_TO_PATTERN = /[移挪放][到在]/
+
+const MOVE_PATTERN = /移动|挪|移|放[到在]/
+
+const LAST_REF_PATTERN = /刚才|刚刚|上一个|最后/
+
+const PRONOUN_PATTERN = /它|这个|那个/
+
+const DIRECTION_MAP: Record<string, Direction> = {
+  左: 'left',
+  右: 'right',
+  上: 'up',
+  下: 'down',
+}
 
 /** 绝对大小："半径五十"、"大小50"、"尺寸为80" */
 const ABSOLUTE_SIZE_PATTERN = /(?:半径|大小|尺寸)(?:为|是)?([零一二两三四五六七八九十百\d]+)/
@@ -56,10 +79,85 @@ function parseDraw(text: string): ParseResult {
 }
 
 /**
- * 解析一条自然语言指令。
- * 注意：先做归一化（语气词/标点清洗），所有匹配基于归一化文本。
+ * 提取目标描述（指代消解输入，P0 范围）：
+ * 特征（图形/颜色）优先；"刚才/上一个"→ last；
+ * 仅当无任何特征时，代词（它/这个/那个）才解释为 selected。
  */
-export function parseCommand(raw: string): ParseResult {
+function extractTarget(text: string): TargetSpec {
+  const target: TargetSpec = {}
+  const shape = lookup(text, SHAPE_SYNONYMS)
+  if (shape) target.shape = shape
+  const color = lookup(text, COLOR_SYNONYMS)
+  if (color) target.color = color
+
+  if (LAST_REF_PATTERN.test(text)) {
+    target.ref = 'last'
+  } else if (!shape && !color && PRONOUN_PATTERN.test(text)) {
+    target.ref = 'selected'
+  }
+  return target
+}
+
+function hasTarget(target: TargetSpec): boolean {
+  return target.ref !== undefined || target.shape !== undefined || target.color !== undefined
+}
+
+function parseSelect(text: string): ParseResult {
+  const target = extractTarget(text)
+  // "选中"无修饰时默认最近对象
+  if (!hasTarget(target)) target.ref = 'last'
+  return { matched: true, commands: [{ action: 'select', target }] }
+}
+
+function parseDelete(text: string): ParseResult {
+  const target = extractTarget(text)
+  const command: DslCommand = hasTarget(target)
+    ? { action: 'delete', target }
+    : { action: 'delete' }
+  return { matched: true, commands: [command] }
+}
+
+function parseMove(text: string): ParseResult {
+  const cmd: MoveCommand = { action: 'move' }
+  const target = extractTarget(text)
+  if (hasTarget(target)) cmd.target = target
+
+  // 绝对位置："移到中间"、"放到左上角"
+  if (MOVE_TO_PATTERN.test(text)) {
+    const position = lookup(text, POSITION_SYNONYMS)
+    if (position) {
+      cmd.position = position
+      return { matched: true, commands: [cmd] }
+    }
+  }
+
+  // 相对方向："往右移"、"向上挪一点"
+  const dirMatch = text.match(/[往向朝]?(左|右|上|下)/)
+  if (!dirMatch) return MISS
+  cmd.direction = DIRECTION_MAP[dirMatch[1]]
+
+  if (/一点点|一点|一些/.test(text)) {
+    cmd.distance = 'small'
+  } else if (/很多|大步|远/.test(text)) {
+    cmd.distance = 'large'
+  } else {
+    const num = text.match(/([零一二两三四五六七八九十百\d]+)\s*(?:像素|px)?/)
+    const value = num ? parseNumber(num[1]) : null
+    // 过小的数值多为"一/两"等量词残留，忽略并使用默认步长
+    if (value !== null && value >= 5) cmd.distance = value
+  }
+
+  return { matched: true, commands: [cmd] }
+}
+
+/**
+ * 解析单个子句。
+ * 意图判定顺序有讲究：
+ * 1. 清空先于删除（"全部删除"不应落入单对象删除）；
+ * 2. 绘制要求"绘制动词 + 图形词"同时存在，且先于移动判定
+ *    （"画一个圆放在左上角"是绘制；"把圆放到左上角"无绘制动词，是移动）。
+ */
+function parseSingle(raw: string): ParseResult {
   const text = normalize(raw)
   if (!text) return MISS
 
@@ -67,9 +165,57 @@ export function parseCommand(raw: string): ParseResult {
     return { matched: true, commands: [{ action: 'clear' }] }
   }
 
-  if (DRAW_VERB_PATTERN.test(text)) {
+  if (DELETE_PATTERN.test(text)) {
+    return parseDelete(text)
+  }
+
+  if (SELECT_PATTERN.test(text)) {
+    return parseSelect(text)
+  }
+
+  if (DRAW_VERB_PATTERN.test(text) && lookup(text, SHAPE_SYNONYMS) !== undefined) {
     return parseDraw(text)
   }
 
+  if (MOVE_PATTERN.test(text)) {
+    return parseMove(text)
+  }
+
   return MISS
+}
+
+/**
+ * 解析一条自然语言指令（入口）。
+ *
+ * 先尝试按连接词拆分子句（"画一个红色的圆和一个蓝色的圆"、
+ * "画一个圆，然后在左上角画个方块"）：所有子句都解析成功才采纳拆分结果，
+ * 任一子句失败则回退整句解析——保证拆分逻辑永远不让原本能解析的句子变差。
+ * 无动词子句（"…和一个蓝色的圆"的后半句）承接前一子句的绘制意图。
+ */
+export function parseCommand(raw: string): ParseResult {
+  const clauses = raw.split(CLAUSE_SPLITTER).filter((c) => normalize(c) !== '')
+
+  if (clauses.length > 1) {
+    const commands: DslCommand[] = []
+    let allMatched = true
+    let prevWasDraw = false
+
+    for (const clause of clauses) {
+      let result = parseSingle(clause)
+      if (!result.matched && prevWasDraw) {
+        const text = normalize(clause)
+        if (lookup(text, SHAPE_SYNONYMS) !== undefined) result = parseDraw(text)
+      }
+      if (!result.matched) {
+        allMatched = false
+        break
+      }
+      commands.push(...result.commands)
+      prevWasDraw = result.commands[result.commands.length - 1]?.action === 'draw'
+    }
+
+    if (allMatched && commands.length > 0) return { matched: true, commands }
+  }
+
+  return parseSingle(raw)
 }
