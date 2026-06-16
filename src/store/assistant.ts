@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import type { ChatMessage } from '../llm/client'
-import { SYSTEM_PROMPT } from '../llm/prompt'
+import { buildSystemPrompt } from '../llm/prompt'
 
 /**
  * 慢路径（LLM）会话状态。
@@ -27,7 +27,7 @@ export const useAssistantStore = defineStore('assistant', {
     /** 开始一次慢路径调用；continuation=true 表示是追问的回答，沿用上下文 */
     begin(userText: string, continuation: boolean) {
       if (!continuation || this.messages.length === 0) {
-        this.messages = [{ role: 'system', content: SYSTEM_PROMPT }]
+        this.messages = [{ role: 'system', content: buildSystemPrompt() }]
       }
       this.messages.push({ role: 'user', content: userText })
       this.thinking = true

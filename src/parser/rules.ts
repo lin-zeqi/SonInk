@@ -17,6 +17,8 @@ import {
   normalize,
   parseNumber,
 } from './lexicon'
+import { expandTemplate, lookupTemplate } from './templates'
+import { useObjectsStore } from '../store/objects'
 
 /**
  * 规则解析引擎（快路径）。
@@ -34,6 +36,18 @@ const CLEAR_PATTERN = /清空|清除|全部删除|重新开始|擦掉所有/
 const REDO_PATTERN = /重做|取消撤销|恢复/
 
 const UNDO_PATTERN = /撤销|撤回|回退|退回|上一步|悔棋/
+
+const REPLAY_PATTERN = /回放|重放/
+
+const BACKGROUND_PATTERN = /背景|背景色|底色|天空/
+
+const EXPORT_PATTERN = /保存|导出|下载|存图/
+
+/** 文本标注："写上你好"、"标注完成"，捕获组为标注内容 */
+const TEXT_PATTERN = /(?:写上|写个|写一个|标注|写)(.+)/
+
+/** 改色动词，新颜色取动词之后的部分（"把红圆变成蓝色"两个颜色按前后区分） */
+const STYLE_PATTERN = /[变涂改染刷填](?:成|为|上)?/
 
 const DRAW_VERB_PATTERN = /画|绘|来|加|添|整|搞|弄|生成|创建/
 
@@ -116,7 +130,10 @@ function parseDraw(text: string): ParseResult {
   }
 
   const shape = lookup(working, SHAPE_SYNONYMS)
-  if (!shape) return MISS
+  if (!shape) {
+    // 模板名（太阳/房子/树…）不再由规则引擎本地展开——交给 LLM 处理
+    return MISS
+  }
 
   const props: DrawProps = {}
   if (relativeTo) props.relativeTo = relativeTo
@@ -136,6 +153,7 @@ function parseDraw(text: string): ParseResult {
  * 提取目标描述（指代消解输入，P0 范围）：
  * 特征（图形/颜色）优先；"刚才/上一个"→ last；
  * 仅当无任何特征时，代词（它/这个/那个）才解释为 selected。
+ * 若仍无命中，检查是否为模板名（"太阳"/"房子"）→ groupName。
  */
 function extractTarget(text: string): TargetSpec {
   const target: TargetSpec = {}
@@ -149,11 +167,29 @@ function extractTarget(text: string): TargetSpec {
   } else if (!shape && !color && PRONOUN_PATTERN.test(text)) {
     target.ref = 'selected'
   }
+
+  // 无特征/指代时尝试匹配模板名作为 groupName（"把太阳移到左边"）
+  if (!shape && !color && target.ref === undefined) {
+    const tpl = lookupTemplate(text)
+    if (tpl) {
+      target.groupName = tpl[0]
+    } else {
+      // 模板未命中时，尝试匹配画布上已有的动态 groupName（如 LLM 创建的"汽车"、"马路"）
+      try {
+        const knownGroups = [...new Set(useObjectsStore().objects.map((o) => o.groupName).filter(Boolean))]
+        const matched = knownGroups.find((g) => text.includes(g!))
+        if (matched) target.groupName = matched
+      } catch {
+        // Pinia 未初始化（如 smoke test 环境），跳过
+      }
+    }
+  }
+
   return target
 }
 
 function hasTarget(target: TargetSpec): boolean {
-  return target.ref !== undefined || target.shape !== undefined || target.color !== undefined
+  return target.ref !== undefined || target.shape !== undefined || target.color !== undefined || target.groupName !== undefined
 }
 
 function parseSelect(text: string): ParseResult {
@@ -181,6 +217,24 @@ function parseMove(text: string): ParseResult {
     const position = lookup(text, POSITION_SYNONYMS)
     if (position) {
       cmd.position = position
+      return { matched: true, commands: [cmd] }
+    }
+  }
+
+  // 相对已有对象定位："放在汽车正下方"、"移到红色圆的左边"
+  const rel = text.match(RELATIVE_PATTERN)
+  if (rel) {
+    const anchorShape = lookup(rel[1], SHAPE_SYNONYMS)
+    const anchorColor = lookup(rel[1], COLOR_SYNONYMS)
+    // 检查是否是动态 groupName（如 LLM 创建的"汽车"、"马路"）
+    let knownGroups: string[] = []
+    try { knownGroups = [...new Set(useObjectsStore().objects.map((o) => o.groupName).filter(Boolean))] } catch { /* Pinia 未初始化 */ }
+    const anchorGroup = knownGroups.find((g) => rel[1].includes(g!))
+    if (anchorShape || anchorColor || anchorGroup) {
+      cmd.relativeTo = { relation: RELATION_MAP[rel[2]] }
+      if (anchorShape) cmd.relativeTo.shape = anchorShape
+      if (anchorColor) cmd.relativeTo.color = anchorColor
+      if (anchorGroup) cmd.relativeTo.groupName = anchorGroup
       return { matched: true, commands: [cmd] }
     }
   }
@@ -240,9 +294,47 @@ function parseResize(text: string): ParseResult {
  * 2. 绘制要求"绘制动词 + 图形词"同时存在，且先于移动判定
  *    （"画一个圆放在左上角"是绘制；"把圆放到左上角"无绘制动词，是移动）。
  */
+function parseBackground(text: string): ParseResult {
+  if (!BACKGROUND_PATTERN.test(text)) return MISS
+  const color = lookup(text, COLOR_SYNONYMS)
+  if (!color) return MISS
+  return { matched: true, commands: [{ action: 'background', color }] }
+}
+
+function parseStyle(text: string): ParseResult {
+  const verb = text.match(STYLE_PATTERN)
+  if (!verb || verb.index === undefined) return MISS
+  // 新颜色在动词之后，目标特征在动词之前（"把红色的圆涂成蓝色"）
+  const color = lookup(text.slice(verb.index + verb[0].length), COLOR_SYNONYMS)
+  if (!color) return MISS
+  const target = extractTarget(text.slice(0, verb.index))
+  const command: DslCommand = hasTarget(target)
+    ? { action: 'style', target, color }
+    : { action: 'style', color }
+  return { matched: true, commands: [command] }
+}
+
+function parseText(text: string): ParseResult {
+  const m = text.match(TEXT_PATTERN)
+  if (!m || !m[1].trim()) return MISS
+  const prefix = text.slice(0, m.index)
+  const props: DrawProps = { text: m[1].trim() }
+  const color = lookup(prefix, COLOR_SYNONYMS)
+  if (color) props.color = color
+  const position = lookup(prefix, POSITION_SYNONYMS)
+  if (position) props.position = position
+  const { size } = extractSize(prefix)
+  if (size !== undefined) props.size = size
+  return { matched: true, commands: [{ action: 'draw', shape: 'text', props }] }
+}
+
 function parseSingle(raw: string): ParseResult {
   const text = normalize(raw)
   if (!text) return MISS
+
+  if (REPLAY_PATTERN.test(text)) {
+    return { matched: true, commands: [{ action: 'replay' }] }
+  }
 
   if (REDO_PATTERN.test(text)) {
     return { matched: true, commands: [{ action: 'redo' }] }
@@ -256,6 +348,14 @@ function parseSingle(raw: string): ParseResult {
     return { matched: true, commands: [{ action: 'clear' }] }
   }
 
+  if (EXPORT_PATTERN.test(text)) {
+    return { matched: true, commands: [{ action: 'export' }] }
+  }
+
+  if (TEXT_PATTERN.test(text)) {
+    return parseText(text)
+  }
+
   if (DELETE_PATTERN.test(text)) {
     return parseDelete(text)
   }
@@ -264,7 +364,20 @@ function parseSingle(raw: string): ParseResult {
     return parseSelect(text)
   }
 
-  if (DRAW_VERB_PATTERN.test(text) && lookup(text, SHAPE_SYNONYMS) !== undefined) {
+  // 背景先于改色："天空背景变为蓝色"不应被 STYLE_PATTERN "变为" 误中
+  const bgResult = parseBackground(text)
+  if (bgResult.matched) return bgResult
+
+  // 改色先于绘制："把圆涂成红色"含图形词但没有绘制动词时也不该误入绘制
+  const styleResult = parseStyle(text)
+  if (styleResult.matched) {
+    return styleResult
+  }
+
+  if (
+    DRAW_VERB_PATTERN.test(text) &&
+    lookup(text, SHAPE_SYNONYMS) !== undefined
+  ) {
     return parseDraw(text)
   }
 
@@ -295,6 +408,29 @@ export function isShapeMissing(raw: string): boolean {
 }
 
 /**
+ * LLM 未配置时的模板回退：尝试用本地模板展开。
+ * 支持单模板（"画太阳"）与复合模板（"画房子，左边加棵树，右上角有太阳"）。
+ * 仅在 LLM 不可用时由 pipeline 调用，保留离线演示能力。
+ */
+export function tryExpandTemplate(raw: string): ParseResult {
+  const clauses = raw.split(CLAUSE_SPLITTER).filter((c) => normalize(c) !== '')
+  const commands: DslCommand[] = []
+
+  for (const clause of clauses) {
+    const text = normalize(clause)
+    const tpl = lookupTemplate(text)
+    if (!tpl) return { matched: false }
+    commands.push(...expandTemplate(
+      tpl[1],
+      lookup(text, POSITION_SYNONYMS),
+      lookup(text, SIZE_SYNONYMS)
+    ))
+  }
+
+  return commands.length > 0 ? { matched: true, commands } : { matched: false }
+}
+
+/**
  * 解析一条自然语言指令（入口）。
  *
  * 先尝试按连接词拆分子句（"画一个红色的圆和一个蓝色的圆"、
@@ -314,7 +450,9 @@ export function parseCommand(raw: string): ParseResult {
       let result = parseSingle(clause)
       if (!result.matched && prevWasDraw) {
         const text = normalize(clause)
-        if (lookup(text, SHAPE_SYNONYMS) !== undefined) result = parseDraw(text)
+        if (lookup(text, SHAPE_SYNONYMS) !== undefined) {
+          result = parseDraw(text)
+        }
       }
       if (!result.matched) {
         allMatched = false

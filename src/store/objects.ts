@@ -12,6 +12,12 @@ export interface CanvasObject {
   color: string
   /** 创建序号，"刚才那个"按此倒序解析 */
   seq: number
+  /** 所属组合 ID（同组图形可整体操作） */
+  groupId?: string
+  /** 组合对象名（如"人"、"房子"） */
+  groupName?: string
+  /** 部件角色（如"头"、"屋顶"） */
+  part?: string
 }
 
 export const useObjectsStore = defineStore('objects', {
@@ -30,6 +36,11 @@ export const useObjectsStore = defineStore('objects', {
     },
     setSelection(ids: string[]) {
       this.selectedIds = ids
+    },
+    /** 改色后同步语义特征，保证"删掉蓝色的圆"匹配新颜色 */
+    updateColor(id: string, color: string) {
+      const obj = this.objects.find((o) => o.id === id)
+      if (obj) obj.color = color
     },
     clear() {
       this.objects = []

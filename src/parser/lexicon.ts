@@ -29,6 +29,8 @@ export const SHAPE_SYNONYMS: ReadonlyArray<[string, ShapeType]> = [
   ['直线', 'line'],
   ['横线', 'line'],
   ['线条', 'line'],
+  ['文字', 'text'],
+  ['文本', 'text'],
   ['圈', 'circle'],
   ['圆', 'circle'],
   ['球', 'circle'],

@@ -1,6 +1,6 @@
 import Konva from 'konva'
-import { getMainLayer, getFeedbackLayer, getCanvasSize } from '../canvas/stage'
-import { revealShape } from '../canvas/draw-animation'
+import { getMainLayer, getBackgroundLayer, getFeedbackLayer, getCanvasSize } from '../canvas/stage'
+import { revealShape, revealStrokes } from '../canvas/draw-animation'
 import { findNode, syncHighlight } from '../canvas/highlight'
 import {
   captureSnapshot,
@@ -13,6 +13,7 @@ import { useHistoryStore } from '../store/history'
 import { useObjectsStore, type CanvasObject } from '../store/objects'
 import {
   DIRECTION_LABELS,
+  POSITION_FRACTIONS,
   POSITION_LABELS,
   SHAPE_LABELS,
   type DeleteCommand,
@@ -27,6 +28,7 @@ import {
   type SelectCommand,
   type SemanticPosition,
   type SemanticSize,
+  type StyleCommand,
   type TargetSpec,
 } from './types'
 
@@ -37,24 +39,11 @@ import {
 
 const DEFAULT_COLOR = '#42a5f5'
 
-/** 九宫格 → 画布比例坐标 */
-const POSITION_FRACTIONS: Record<SemanticPosition, [number, number]> = {
-  'top-left': [0.2, 0.22],
-  top: [0.5, 0.22],
-  'top-right': [0.8, 0.22],
-  left: [0.2, 0.5],
-  center: [0.5, 0.5],
-  right: [0.8, 0.5],
-  'bottom-left': [0.2, 0.78],
-  bottom: [0.5, 0.78],
-  'bottom-right': [0.8, 0.78],
-}
-
 /** 语义大小 → 相对画布短边的比例（圆=半径，方/三角=外接半径） */
 const SIZE_FRACTIONS: Record<SemanticSize, number> = {
-  small: 0.05,
-  medium: 0.09,
-  large: 0.15,
+  small: 0.07,
+  medium: 0.13,
+  large: 0.20,
 }
 
 /** 语义移动步长 → 相对画布短边的比例 */
@@ -81,7 +70,7 @@ const MIN_RADIUS = 4
  * 带过渡动画地修改节点属性：高亮框先清除（避免动画期间停留在旧位置），
  * 动画结束后按选中态重绘。
  */
-function animateTo(node: Konva.Shape, attrs: Record<string, number>): void {
+function animateTo(node: Konva.Shape, attrs: Record<string, number | string>): void {
   getFeedbackLayer().destroyChildren()
   setPendingAttrs(node.id(), attrs)
   node.to({
@@ -124,10 +113,20 @@ function createNode(cmd: DrawCommand, id: string): Konva.Shape {
   const r = resolveSize(cmd.props?.size)
   const color = cmd.props?.color ?? DEFAULT_COLOR
 
-  // 填充图形同时带同色描边：渐进绘制动画沿描边逐笔画出轮廓
+  // 填充图形同时带同色描边：渐进绘制动画沿描边逐笔画出轮廓。
+  // draggable 随节点序列化进快照，撤销/重做恢复后仍可拖拽
   switch (cmd.shape) {
     case 'circle':
-      return new Konva.Circle({ id, x, y, radius: r, fill: color, stroke: color, strokeWidth: 3 })
+      return new Konva.Circle({
+        id,
+        x,
+        y,
+        radius: r,
+        fill: color,
+        stroke: color,
+        strokeWidth: 3,
+        draggable: true,
+      })
     case 'rect':
       return new Konva.Rect({
         id,
@@ -138,6 +137,7 @@ function createNode(cmd: DrawCommand, id: string): Konva.Shape {
         fill: color,
         stroke: color,
         strokeWidth: 3,
+        draggable: true,
       })
     case 'triangle':
       return new Konva.RegularPolygon({
@@ -149,11 +149,11 @@ function createNode(cmd: DrawCommand, id: string): Konva.Shape {
         fill: color,
         stroke: color,
         strokeWidth: 3,
+        draggable: true,
       })
     case 'line': {
       const { from, to } = cmd.props ?? {}
       const { width, height } = getCanvasSize()
-      // 指定起止点（LLM 组合图形场景）优先；否则按位置画水平线
       const points =
         from && to
           ? [width * from.fx, height * from.fy, width * to.fx, height * to.fy]
@@ -164,6 +164,44 @@ function createNode(cmd: DrawCommand, id: string): Konva.Shape {
         stroke: color,
         strokeWidth: 4,
         lineCap: 'round',
+        draggable: true,
+      })
+    }
+    case 'text': {
+      const node = new Konva.Text({
+        id,
+        x,
+        y,
+        text: cmd.props?.text ?? '文本',
+        fontSize: r,
+        fontStyle: 'bold',
+        fill: cmd.props?.color ?? '#212121',
+        draggable: true,
+      })
+      node.offsetX(node.width() / 2)
+      node.offsetY(node.height() / 2)
+      return node
+    }
+    case 'path': {
+      const { width, height } = getCanvasSize()
+      const pts = cmd.props?.points
+      const flat: number[] = []
+      for (const p of pts!) {
+        flat.push(width * p.fx, height * p.fy)
+      }
+      const close = cmd.props?.close ?? false
+      // 闭合路径默认用 color 填充，也可用 fill 单独指定
+      const fillColor = cmd.props?.fill ?? (close ? color : undefined)
+      return new Konva.Line({
+        id,
+        points: flat,
+        stroke: color,
+        strokeWidth: 3,
+        lineCap: 'round',
+        lineJoin: 'round',
+        closed: close,
+        fill: fillColor,
+        draggable: true,
       })
     }
   }
@@ -175,7 +213,9 @@ function createNode(cmd: DrawCommand, id: string): Konva.Shape {
  * - ref last：最近对象；ref selected：当前选中（无选中则退化为最近对象）；
  * - 特征匹配：shape/color 过滤全部对象；若有选中且选中与匹配集有交集，
  *   优先取交集（"选中红圆"后说"删掉这个圆"应只作用于选中者）；
- * - ref last + 特征同时存在时取匹配集中最近的一个（"刚才那个圆"）。
+ * - ref last + 特征同时存在时取匹配集中最近的一个（"刚才那个圆"）；
+ * - groupName：匹配同名组（取最近创建的同名组全部对象），
+ *   结合 part 可进一步过滤（"删掉房子的屋顶"）。
  */
 function resolveTarget(target: TargetSpec | undefined): CanvasObject[] {
   const store = useObjectsStore()
@@ -183,6 +223,21 @@ function resolveTarget(target: TargetSpec | undefined): CanvasObject[] {
   const selected = store.selectedObjects
 
   const hasFeature = target?.shape !== undefined || target?.color !== undefined
+
+  // groupName 优先：取最近创建的同名组（"把这个人变小" → 找到最近"人"组的所有图形）
+  if (target?.groupName) {
+    const groupObjects = all.filter((o) => o.groupName === target.groupName)
+    if (!groupObjects.length) return []
+    // 取最近出现的 groupId
+    const latestGroupId = groupObjects[groupObjects.length - 1].groupId
+    let matched = all.filter((o) => o.groupId === latestGroupId)
+    // part 细粒度过滤："删掉房子的屋顶" → groupName="房子" + part="屋顶"
+    if (target.part) {
+      matched = matched.filter((o) => o.part === target.part)
+      if (!matched.length) return []
+    }
+    return matched
+  }
 
   if (!target || (target.ref === undefined && !hasFeature)) {
     return selected.length ? selected : all.slice(-1)
@@ -221,15 +276,14 @@ function resolveRelativePosition(
   const anchors = useObjectsStore().objects.filter(
     (o) =>
       (rel.shape === undefined || o.shape === rel.shape) &&
-      (rel.color === undefined || o.color === rel.color)
+      (rel.color === undefined || o.color === rel.color) &&
+      (rel.groupName === undefined || o.groupName === rel.groupName)
   )
   const anchor = anchors[anchors.length - 1]
   const node = anchor ? findNode(anchor.id) : null
   if (!node) {
-    return {
-      ok: false,
-      message: `画布上没找到要参照的${rel.shape ? SHAPE_LABELS[rel.shape] : '对象'}`,
-    }
+    const desc = rel.groupName ?? rel.shape ? (rel.shape ? SHAPE_LABELS[rel.shape] : rel.groupName) : '对象'
+    return { ok: false, message: `画布上没找到要参照的${desc}` }
   }
 
   const box = node.getClientRect()
@@ -266,12 +320,35 @@ function execDraw(cmd: DrawCommand): ExecResult {
   const id = `obj-${nextId++}`
   const node = createNode(cmd, id)
   getMainLayer().add(node)
-  revealShape(node, cmd.shape === 'line' ? null : (cmd.props?.color ?? DEFAULT_COLOR))
+  const color = cmd.props?.color ?? (cmd.shape === 'text' ? '#212121' : DEFAULT_COLOR)
+
+  if (cmd.shape === 'path') {
+    // path 节点先加入画布但不播放动画——逐笔描画由 executeAll 统一调度
+    // 预置隐藏态，等待 revealStrokes 按序显现
+    useObjectsStore().register({
+      id: node.id(),
+      shape: 'path',
+      color,
+      groupId: cmd.props?.groupId,
+      groupName: cmd.props?.groupName,
+      part: cmd.props?.part,
+    })
+    return { ok: true, message: '' }
+  }
+
+  // 基础图形（圆/方/三角/直线/文字）：立即播放原有渐进绘制动画
+  revealShape(node, cmd.shape === 'line' ? null : color)
   useObjectsStore().register({
-    id,
+    id: node.id(),
     shape: cmd.shape,
-    color: cmd.props?.color ?? DEFAULT_COLOR,
+    color,
+    groupId: cmd.props?.groupId,
+    groupName: cmd.props?.groupName,
+    part: cmd.props?.part,
   })
+  if (cmd.shape === 'text') {
+    return { ok: true, message: `已写上"${cmd.props?.text ?? ''}"` }
+  }
   return { ok: true, message: `已画一个${SHAPE_LABELS[cmd.shape]}` }
 }
 
@@ -292,14 +369,83 @@ function execSelect(cmd: SelectCommand): ExecResult {
 function execMove(cmd: MoveCommand): ExecResult {
   const matched = resolveTarget(cmd.target)
   if (!matched.length) return { ok: false, message: '画布上没有可移动的对象' }
+
+  const { width, height } = getCanvasSize()
+
+  // 相对已有对象定位（"放在汽车正下方"）
+  if (cmd.relativeTo) {
+    const resolved = resolveRelativePosition(cmd.relativeTo, 0)
+    if (!resolved.ok) return resolved
+    const targetX = width * resolved.position.fx
+    const targetY = height * resolved.position.fy
+
+    // 计算目标对象的当前包围盒中心
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    for (const obj of matched) {
+      const node = findNode(obj.id)
+      if (!node) continue
+      const box = node.getClientRect()
+      minX = Math.min(minX, box.x)
+      minY = Math.min(minY, box.y)
+      maxX = Math.max(maxX, box.x + box.width)
+      maxY = Math.max(maxY, box.y + box.height)
+    }
+    const currentCx = (minX + maxX) / 2
+    const currentCy = (minY + maxY) / 2
+    const dx = targetX - currentCx
+    const dy = targetY - currentCy
+
+    for (const obj of matched) {
+      const node = findNode(obj.id)
+      if (node) animateTo(node, { x: node.x() + dx, y: node.y() + dy })
+    }
+    const relLabels: Record<string, string> = { 'left-of': '左侧', 'right-of': '右侧', above: '上方', below: '下方' }
+    const relLabel = relLabels[cmd.relativeTo.relation] ?? cmd.relativeTo.relation
+    return { ok: true, message: `已移到锚点${relLabel}` }
+  }
+
+  // 组移动或批量移动（"把太阳移到左边" → 移动太阳组全部图形）
   if (matched.length > 1) {
-    return { ok: false, message: '匹配到多个对象，请先选中要移动的那一个' }
+    // 计算组的包围盒中心作为参考点
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    for (const obj of matched) {
+      const node = findNode(obj.id)
+      if (!node) continue
+      const box = node.getClientRect()
+      minX = Math.min(minX, box.x)
+      minY = Math.min(minY, box.y)
+      maxX = Math.max(maxX, box.x + box.width)
+      maxY = Math.max(maxY, box.y + box.height)
+    }
+    const groupCx = (minX + maxX) / 2
+    const groupCy = (minY + maxY) / 2
+
+    if (cmd.position) {
+      const [fx, fy] = POSITION_FRACTIONS[cmd.position]
+      const dx = width * fx - groupCx
+      const dy = height * fy - groupCy
+      for (const obj of matched) {
+        const node = findNode(obj.id)
+        if (node) animateTo(node, { x: node.x() + dx, y: node.y() + dy })
+      }
+      return { ok: true, message: `已移动到${POSITION_LABELS[cmd.position]}` }
+    }
+
+    const direction = cmd.direction ?? 'right'
+    const distance =
+      typeof cmd.distance === 'number'
+        ? cmd.distance
+        : Math.min(width, height) * MOVE_FRACTIONS[cmd.distance ?? 'medium']
+    const [vx, vy] = DIRECTION_VECTORS[direction]
+    for (const obj of matched) {
+      const node = findNode(obj.id)
+      if (node) animateTo(node, { x: node.x() + vx * distance, y: node.y() + vy * distance })
+    }
+    return { ok: true, message: `已向${DIRECTION_LABELS[direction]}移动` }
   }
 
   const node = findNode(matched[0].id)
   if (!node) return { ok: false, message: '对象状态异常，请重试' }
-
-  const { width, height } = getCanvasSize()
 
   if (cmd.position) {
     const [fx, fy] = POSITION_FRACTIONS[cmd.position]
@@ -324,21 +470,29 @@ function execMove(cmd: MoveCommand): ExecResult {
 function execResize(cmd: ResizeCommand): ExecResult {
   const matched = resolveTarget(cmd.target)
   if (!matched.length) return { ok: false, message: '画布上没有可缩放的对象' }
-  if (matched.length > 1) {
-    return { ok: false, message: '匹配到多个对象，请先选中要缩放的那一个' }
-  }
-
-  const node = findNode(matched[0].id)
-  if (!node) return { ok: false, message: '对象状态异常，请重试' }
 
   const doneMessage =
     cmd.size !== undefined ? '已调整大小' : (cmd.scale ?? 1) > 1 ? '已放大' : '已缩小'
+
+  // 组缩放或批量缩放（"把这个人变小" → 缩放人组全部图形）
+  for (const obj of matched) {
+    const result = resizeOne(obj, cmd)
+    if (!result.ok) return result
+  }
+  if (matched.length === 1) return { ok: true, message: doneMessage }
+  return { ok: true, message: `${doneMessage}（${matched.length} 个对象）` }
+}
+
+/** 对单个对象执行缩放 */
+function resizeOne(obj: CanvasObject, cmd: ResizeCommand): ExecResult {
+  const node = findNode(obj.id)
+  if (!node) return { ok: false, message: '对象状态异常，请重试' }
 
   if (node instanceof Konva.Circle || node instanceof Konva.RegularPolygon) {
     const r = node.radius()
     const target = Math.max(cmd.size ?? r * (cmd.scale ?? 1), MIN_RADIUS)
     animateTo(node, { radius: target })
-    return { ok: true, message: doneMessage }
+    return { ok: true, message: '' }
   }
 
   if (node instanceof Konva.Rect) {
@@ -346,22 +500,19 @@ function execResize(cmd: ResizeCommand): ExecResult {
     const factor = cmd.size !== undefined ? (cmd.size * 2) / w : (cmd.scale ?? 1)
     const newW = Math.max(w * factor, MIN_RADIUS * 2)
     const newH = Math.max(node.height() * factor, MIN_RADIUS * 2)
-    // 保持中心不动：宽高变化的一半反向补偿到左上角
     animateTo(node, {
       x: node.x() - (newW - w) / 2,
       y: node.y() - (newH - node.height()) / 2,
       width: newW,
       height: newH,
     })
-    return { ok: true, message: doneMessage }
+    return { ok: true, message: '' }
   }
 
   if (node instanceof Konva.Line) {
     if (cmd.size !== undefined) {
       return { ok: false, message: '直线请用倍数缩放，比如"放大一倍"' }
     }
-    // 首次缩放时把变换原点移到线段包围盒中心（位置补偿，视觉不变），
-    // 之后通过 scale 缩放，points 始终保持创建时的原始值
     if (!node.offsetX() && !node.offsetY()) {
       const box = node.getSelfRect()
       const cx = box.x + box.width / 2
@@ -374,10 +525,57 @@ function execResize(cmd: ResizeCommand): ExecResult {
       scaleX: (node.scaleX() || 1) * factor,
       scaleY: (node.scaleY() || 1) * factor,
     })
-    return { ok: true, message: doneMessage }
+    return { ok: true, message: '' }
   }
 
   return { ok: false, message: '该对象不支持缩放' }
+}
+
+function execStyle(cmd: StyleCommand): ExecResult {
+  const matched = resolveTarget(cmd.target)
+  if (!matched.length) return { ok: false, message: '没有找到要改颜色的对象' }
+
+  const store = useObjectsStore()
+  for (const obj of matched) {
+    const node = findNode(obj.id)
+    if (!node) continue
+    // 直线/文字只有单一着色通道，填充图形描边同步换色
+    const attrs: Record<string, string> =
+      node instanceof Konva.Line
+        ? { stroke: cmd.color }
+        : node instanceof Konva.Text
+          ? { fill: cmd.color }
+          : { fill: cmd.color, stroke: cmd.color }
+    animateTo(node, attrs)
+    store.updateColor(obj.id, cmd.color)
+  }
+
+  if (matched.length === 1) return { ok: true, message: `已为${describe(matched[0])}换色` }
+  return { ok: true, message: `已为 ${matched.length} 个对象换色` }
+}
+
+function execExport(): ExecResult {
+  const stage = getMainLayer().getStage()
+  if (!stage) return { ok: false, message: '画布尚未就绪' }
+
+  // 选中高亮属于交互反馈，不进入导出图
+  const feedbackLayer = getFeedbackLayer()
+  const wasVisible = feedbackLayer.visible()
+  feedbackLayer.visible(false)
+  const url = stage.toDataURL({ pixelRatio: 2, mimeType: 'image/png' })
+  feedbackLayer.visible(wasVisible)
+
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `sonink-${Date.now()}.png`
+  a.click()
+
+  if (import.meta.env.DEV) {
+    const hook = (window as unknown as Record<string, Record<string, unknown> | undefined>)
+      .__sonink
+    if (hook) hook.lastExport = url
+  }
+  return { ok: true, message: '已导出图片' }
 }
 
 function execDelete(cmd: DeleteCommand): ExecResult {
@@ -385,21 +583,42 @@ function execDelete(cmd: DeleteCommand): ExecResult {
   if (!matched.length) return { ok: false, message: '没有找到要删除的对象' }
 
   const store = useObjectsStore()
+  let partLabel = ''
+  if (cmd.target?.groupName && cmd.target?.part && matched.length === 1) {
+    partLabel = `的${cmd.target.part}`
+  }
   for (const obj of matched) {
     findNode(obj.id)?.destroy()
     store.remove(obj.id)
   }
   syncHighlight()
 
-  if (matched.length === 1) return { ok: true, message: `已删除${describe(matched[0])}` }
-  return { ok: true, message: `已删除 ${matched.length} 个对象` }
+  if (matched.length === 1) return { ok: true, message: `已删除${describe(matched[0])}${partLabel}` }
+  return { ok: true, message: `已删除 ${matched.length} 个对象${partLabel}` }
 }
 
 function execClear(): ExecResult {
+  getBackgroundLayer().destroyChildren()
   getMainLayer().destroyChildren()
   getFeedbackLayer().destroyChildren()
   useObjectsStore().clear()
   return { ok: true, message: '已清空画布' }
+}
+
+function execBackground(cmd: { action: 'background'; color: string }): ExecResult {
+  const layer = getBackgroundLayer()
+  const { width, height } = getCanvasSize()
+  layer.destroyChildren()
+  layer.add(new Konva.Rect({
+    id: 'bg',
+    x: 0,
+    y: 0,
+    width,
+    height,
+    fill: cmd.color,
+    listening: false,
+  }))
+  return { ok: true, message: `已设置背景色` }
 }
 
 export function execute(cmd: DslCommand): ExecResult {
@@ -412,14 +631,22 @@ export function execute(cmd: DslCommand): ExecResult {
       return execMove(cmd)
     case 'resize':
       return execResize(cmd)
+    case 'style':
+      return execStyle(cmd)
     case 'delete':
       return execDelete(cmd)
+    case 'background':
+      return execBackground(cmd)
     case 'clear':
       return execClear()
     case 'undo':
       return useHistoryStore().undo()
     case 'redo':
       return useHistoryStore().redo()
+    case 'export':
+      return execExport()
+    case 'replay':
+      return useHistoryStore().replay()
   }
 }
 
@@ -429,9 +656,45 @@ function isMutating(cmd: DslCommand): boolean {
     cmd.action === 'draw' ||
     cmd.action === 'move' ||
     cmd.action === 'resize' ||
+    cmd.action === 'style' ||
     cmd.action === 'delete' ||
-    cmd.action === 'clear'
+    cmd.action === 'clear' ||
+    cmd.action === 'background'
   )
+}
+
+/**
+ * 自动位置收紧：LLM 没有空间推理能力，输出的 fx/fy 坐标往往撒得太开。
+ * 本函数检测本批次中所有 draw 指令的横向跨度，若超过画布 35% 则整体
+ * 向中心压缩到 30%——保持内部相对比例不变，只改变整体密度。
+ * 仅处理显式 fx/fy 坐标；语义位置（九宫格）不走此逻辑。
+ */
+function autoCompact(commands: DslCommand[]): void {
+  const draws: { cmd: DrawCommand; fx: number }[] = []
+  for (const cmd of commands) {
+    if (cmd.action === 'draw' && cmd.props?.position && typeof cmd.props.position === 'object') {
+      draws.push({ cmd, fx: cmd.props.position.fx })
+    }
+  }
+  if (draws.length < 2) return
+
+  let minFx = Infinity
+  let maxFx = -Infinity
+  for (const { fx } of draws) {
+    if (fx < minFx) minFx = fx
+    if (fx > maxFx) maxFx = fx
+  }
+
+  const spread = maxFx - minFx
+  if (spread <= 0.35) return // 已经很紧凑了
+
+  const centerFx = (minFx + maxFx) / 2
+  const scale = 0.30 / spread
+  for (const { cmd } of draws) {
+    const pos = cmd.props!.position as PositionFraction
+    const newFx = centerFx + (pos.fx - centerFx) * scale
+    cmd.props = { ...cmd.props!, position: { fx: newFx, fy: pos.fy } }
+  }
 }
 
 /**
@@ -442,7 +705,27 @@ function isMutating(cmd: DslCommand): boolean {
  * 画布不会停在半完成状态。
  */
 export function executeAll(commands: DslCommand[]): ExecResult {
+  // 预扫描：为带 groupName 的 draw 指令自动分配 groupId
+  // 同批次中同名 groupName 共享同一个 groupId，不同批次各自独立
+  const groupMap = new Map<string, string>()
+  let nextGroupId = 1
+  for (const cmd of commands) {
+    if (cmd.action === 'draw' && cmd.props?.groupName && !cmd.props.groupId) {
+      const name = cmd.props.groupName
+      if (!groupMap.has(name)) {
+        groupMap.set(name, `group-${nextGroupId++}`)
+      }
+      cmd.props = { ...cmd.props, groupId: groupMap.get(name)! }
+    }
+  }
+
+  // 自动收紧：如果本批次的 draw 指令间距过大，整体压缩到紧凑范围
+  autoCompact(commands)
+
   const before = commands.some(isMutating) ? captureSnapshot() : null
+
+  // 记录执行前的节点数，用于收集本批次新增的 path 节点做逐笔描画
+  const nodeCountBefore = getMainLayer().getChildren().length
 
   const messages: string[] = []
   for (const cmd of commands) {
@@ -454,9 +737,21 @@ export function executeAll(commands: DslCommand[]): ExecResult {
       }
       return result
     }
-    messages.push(result.message)
+    if (result.message) messages.push(result.message)
+  }
+
+  // 逐笔描画：收集本批次新增的 path 节点，按创建顺序依次显现
+  const allNewNodes = getMainLayer().getChildren().slice(nodeCountBefore)
+  const pathNodes: Konva.Shape[] = []
+  for (const n of allNewNodes) {
+    if (!(n instanceof Konva.Shape)) continue
+    const obj = useObjectsStore().objects.find((o) => o.id === String(n.id()))
+    if (obj?.shape === 'path') pathNodes.push(n)
+  }
+  if (pathNodes.length > 0) {
+    revealStrokes(pathNodes, { baseInterval: 400, jitter: 80 })
   }
 
   if (before && snapshotChanged(before)) useHistoryStore().commit(before)
-  return { ok: true, message: messages.join('，') }
+  return { ok: true, message: messages.join('，') || '已开始描画...' }
 }

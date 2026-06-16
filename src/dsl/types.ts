@@ -6,7 +6,7 @@
  * - 解析层禁止输出绝对坐标。
  */
 
-export type ShapeType = 'circle' | 'rect' | 'triangle' | 'line'
+export type ShapeType = 'circle' | 'rect' | 'triangle' | 'line' | 'text' | 'path'
 
 export type SemanticSize = 'small' | 'medium' | 'large'
 
@@ -32,6 +32,15 @@ export interface PositionFraction {
   fy: number
 }
 
+/**
+ * 路径描画点：连续点连成折线，勾勒出任意形状的轮廓。
+ * LLM 不需要理解"圆"、"方"——只需要输出一组首尾相接的坐标点序列。
+ */
+export interface PathPoint {
+  fx: number
+  fy: number
+}
+
 /** 相对已有对象的方位关系 */
 export type RelativeRelation = 'left-of' | 'right-of' | 'above' | 'below'
 
@@ -42,6 +51,8 @@ export type RelativeRelation = 'left-of' | 'right-of' | 'above' | 'below'
 export interface RelativeTo {
   shape?: ShapeType
   color?: string
+  /** 按组合对象名匹配锚点（如 LLM 创建的"汽车"、"马路"） */
+  groupName?: string
   relation: RelativeRelation
 }
 
@@ -57,6 +68,20 @@ export interface DrawProps {
   /** 仅直线有效：起止点比例坐标，缺省时画水平线 */
   from?: PositionFraction
   to?: PositionFraction
+  /** 仅 shape=text 有效：标注内容 */
+  text?: string
+  /** 组合对象名（如"人"、"房子"），同组图形可整体选中/移动/缩放/删除 */
+  groupName?: string
+  /** 部件角色（如"头"、"屋顶"、"左腿"），用于细粒度指代 */
+  part?: string
+  /** 组合 ID（由执行引擎自动分配，LLM 与规则引擎不填） */
+  groupId?: string
+  /** 仅 shape=path 有效：连续坐标点序列，引擎自动连成折线 */
+  points?: PathPoint[]
+  /** 仅 shape=path 有效：填充色（闭合轮廓建议填色），省略时默认与 color 相同 */
+  fill?: string
+  /** 仅 shape=path 有效：是否闭合路径（连接终点回起点） */
+  close?: boolean
 }
 
 export interface DrawCommand {
@@ -69,11 +94,17 @@ export interface DrawCommand {
  * 对象目标描述（指代消解的输入）。
  * P0 范围：ref 指代（"刚才那个"=last，"它/这个"=selected）与单特征匹配（颜色+图形）。
  * 空 target 表示"当前选中，否则最近对象"。
+ * groupName：按组合对象名匹配（"把这个人变小" → groupName: "人"）。
+ * part：按部件角色匹配（"删掉房子的屋顶" → groupName: "房子" + part: "屋顶"）。
  */
 export interface TargetSpec {
   ref?: 'last' | 'selected'
   shape?: ShapeType
   color?: string
+  /** 按组合对象名匹配（取最近创建的同名组） */
+  groupName?: string
+  /** 按部件角色匹配 */
+  part?: string
 }
 
 export interface SelectCommand {
@@ -94,6 +125,8 @@ export interface MoveCommand {
   distance?: MoveDistance
   /** 绝对移动：九宫格目标位置（与 direction 二选一） */
   position?: SemanticPosition
+  /** 相对已有对象定位（"放在汽车正下方"），优先级高于 direction */
+  relativeTo?: RelativeTo
 }
 
 export interface ResizeCommand {
@@ -114,6 +147,29 @@ export interface ClearCommand {
   action: 'clear'
 }
 
+/** 修改已有对象颜色（"把这个圆变成蓝色"） */
+export interface StyleCommand {
+  action: 'style'
+  target?: TargetSpec
+  color: string
+}
+
+/** 导出画布为 PNG */
+export interface ExportCommand {
+  action: 'export'
+}
+
+/** 设置画布背景色（位于所有图形下方，不遮挡已有图形） */
+export interface BackgroundCommand {
+  action: 'background'
+  color: string
+}
+
+/** 按时间顺序回放绘图过程（快照时间线） */
+export interface ReplayCommand {
+  action: 'replay'
+}
+
 /** 撤销上一次变更（复合指令作为一个事务整体撤销） */
 export interface UndoCommand {
   action: 'undo'
@@ -128,10 +184,14 @@ export type DslCommand =
   | SelectCommand
   | MoveCommand
   | ResizeCommand
+  | StyleCommand
   | DeleteCommand
   | ClearCommand
   | UndoCommand
   | RedoCommand
+  | BackgroundCommand
+  | ExportCommand
+  | ReplayCommand
 
 /** 执行结果，message 供 TTS 播报与字幕反馈 */
 export interface ExecResult {
@@ -139,7 +199,7 @@ export interface ExecResult {
   message: string
 }
 
-export const SHAPE_TYPES: readonly ShapeType[] = ['circle', 'rect', 'triangle', 'line']
+export const SHAPE_TYPES: readonly ShapeType[] = ['circle', 'rect', 'triangle', 'line', 'text', 'path']
 
 export const SEMANTIC_SIZES: readonly SemanticSize[] = ['small', 'medium', 'large']
 
@@ -169,6 +229,21 @@ export const SHAPE_LABELS: Record<ShapeType, string> = {
   rect: '矩形',
   triangle: '三角形',
   line: '直线',
+  text: '文字',
+  path: '路径',
+}
+
+/** 九宫格 → 画布比例坐标（执行层换算与模板展开共用） */
+export const POSITION_FRACTIONS: Record<SemanticPosition, [number, number]> = {
+  'top-left': [0.33, 0.28],
+  top: [0.5, 0.28],
+  'top-right': [0.67, 0.28],
+  left: [0.33, 0.5],
+  center: [0.5, 0.5],
+  right: [0.67, 0.5],
+  'bottom-left': [0.33, 0.72],
+  bottom: [0.5, 0.72],
+  'bottom-right': [0.67, 0.72],
 }
 
 export const POSITION_LABELS: Record<SemanticPosition, string> = {

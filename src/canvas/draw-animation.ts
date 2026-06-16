@@ -45,6 +45,18 @@ function hexToRgba(hex: string, alpha: number): string {
  * @param fill 最终填充色；直线等无填充图形传 null
  */
 export function revealShape(node: Konva.Shape, fill: string | null): void {
+  // 文字没有可描边的轮廓，用透明度淡入
+  if (node instanceof Konva.Text) {
+    node.opacity(0)
+    new Konva.Tween({
+      node,
+      opacity: 1,
+      duration: OUTLINE_DURATION,
+      easing: Konva.Easings.EaseIn,
+    }).play()
+    return
+  }
+
   const length = outlineLength(node)
   if (length <= 0) return
 
@@ -72,4 +84,72 @@ export function revealShape(node: Konva.Shape, fill: string | null): void {
       }).play()
     },
   }).play()
+}
+
+/**
+ * 逐笔描画动画：将一组线段按顺序依次"画出"，模拟手绘的笔触感。
+ * 每条线段用虚线偏移技巧实现——视觉上是笔尖从线段起点移动到终点。
+ *
+ * 使用 setTimeout 链而非 Konva.Tween 的 delay 属性：
+ * delay 机制在多个 Tween 同时排队到同一图层时可能相互干扰，
+ * setTimeout 链保证严格顺序、无竞态。
+ *
+ * @param nodes 待描画的线段节点（通常来自 path 分解后的各个 segment）
+ * @param options.baseInterval 每笔之间的基础间隔（毫秒），默认 65ms
+ * @param options.jitter 每笔间隔的随机抖动范围（毫秒），默认 15ms
+ */
+export function revealStrokes(
+  nodes: Konva.Shape[],
+  options?: { baseInterval?: number; jitter?: number }
+): void {
+  const baseInterval = options?.baseInterval ?? 400
+  const jitter = options?.jitter ?? 80
+
+  let cumulativeDelay = 0
+
+  for (const node of nodes) {
+    const strokeDuration = baseInterval + (Math.random() - 0.5) * 2 * jitter
+    const delay = cumulativeDelay
+
+    // 保存目标填充色，描边阶段先隐藏填充
+    const targetFill = node.fill()
+    const hasFill = typeof targetFill === 'string' && targetFill !== 'transparent'
+    if (hasFill) {
+      node.fill(hexToRgba(targetFill, 0))
+    }
+
+    const length = outlineLength(node)
+    if (length <= 0) {
+      // 退化线段（长度 0）：直接显示并恢复填充
+      if (hasFill) node.fill(targetFill)
+      cumulativeDelay += strokeDuration
+      continue
+    }
+
+    node.dash([length])
+    node.dashOffset(length)
+
+    setTimeout(() => {
+      new Konva.Tween({
+        node,
+        dashOffset: 0,
+        duration: strokeDuration / 1000,
+        easing: Konva.Easings.Linear,
+        onFinish: () => {
+          node.dash([])
+          // 描边完成后淡入填充
+          if (hasFill) {
+            new Konva.Tween({
+              node,
+              fill: targetFill,
+              duration: 0.2,
+              easing: Konva.Easings.EaseIn,
+            }).play()
+          }
+        },
+      }).play()
+    }, delay)
+
+    cumulativeDelay += strokeDuration
+  }
 }

@@ -6,6 +6,7 @@ import Konva from 'konva'
  * 反馈元素不进入对象列表与撤销历史。
  */
 let stage: Konva.Stage | null = null
+let backgroundLayer: Konva.Layer | null = null
 let mainLayer: Konva.Layer | null = null
 let feedbackLayer: Konva.Layer | null = null
 
@@ -15,14 +16,16 @@ export function initStage(container: HTMLDivElement): Konva.Stage {
     width: container.clientWidth,
     height: container.clientHeight,
   })
+  backgroundLayer = new Konva.Layer({ listening: false })
   mainLayer = new Konva.Layer()
   feedbackLayer = new Konva.Layer({ listening: false })
+  stage.add(backgroundLayer)
   stage.add(mainLayer)
   stage.add(feedbackLayer)
 
   if (import.meta.env.DEV) {
     // 开发态调试钩子，供 e2e 脚本检视画布内部状态
-    ;(window as unknown as Record<string, unknown>).__sonink = { stage, mainLayer, feedbackLayer }
+    ;(window as unknown as Record<string, unknown>).__sonink = { stage, backgroundLayer, mainLayer, feedbackLayer }
   }
 
   // 窗口缩放时同步画布尺寸，语义定位（九宫格）按比例重算依赖此尺寸
@@ -41,6 +44,10 @@ function assertInited<T>(value: T | null): T {
 
 export function getStage(): Konva.Stage {
   return assertInited(stage)
+}
+
+export function getBackgroundLayer(): Konva.Layer {
+  return assertInited(backgroundLayer)
 }
 
 export function getMainLayer(): Konva.Layer {
