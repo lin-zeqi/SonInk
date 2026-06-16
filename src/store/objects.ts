@@ -35,6 +35,12 @@ export const useObjectsStore = defineStore('objects', {
       this.objects = []
       this.selectedIds = []
     },
+    /** 整体恢复登记表（撤销/重做）。nextSeq 保持单调递增，避免新对象序号与历史冲突 */
+    restore(objects: CanvasObject[], selectedIds: string[]) {
+      this.objects = objects
+      this.selectedIds = selectedIds
+      this.nextSeq = Math.max(this.nextSeq, ...objects.map((o) => o.seq + 1), 1)
+    },
   },
   getters: {
     selectedObjects: (s) => s.objects.filter((o) => s.selectedIds.includes(o.id)),

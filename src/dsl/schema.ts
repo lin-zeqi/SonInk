@@ -181,6 +181,10 @@ function validateOne(v: unknown): { ok: true; command: DslCommand } | { ok: fals
     }
     case 'clear':
       return { ok: true, command: { action: 'clear' } }
+    case 'undo':
+      return { ok: true, command: { action: 'undo' } }
+    case 'redo':
+      return { ok: true, command: { action: 'redo' } }
     default:
       return { ok: false, error: `不支持的操作: ${String(v.action)}` }
   }
