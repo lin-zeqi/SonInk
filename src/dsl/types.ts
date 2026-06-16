@@ -32,6 +32,19 @@ export interface PositionFraction {
   fy: number
 }
 
+/** 相对已有对象的方位关系 */
+export type RelativeRelation = 'left-of' | 'right-of' | 'above' | 'below'
+
+/**
+ * 相对定位锚点（"在圆的右边画一个方形"）。
+ * 按特征匹配已有对象，坐标计算全部由执行层完成（design.md §3.3）。
+ */
+export interface RelativeTo {
+  shape?: ShapeType
+  color?: string
+  relation: RelativeRelation
+}
+
 export interface DrawProps {
   /** 十六进制颜色，省略时使用默认色 */
   color?: string
@@ -39,6 +52,8 @@ export interface DrawProps {
   size?: SemanticSize | number
   /** 省略时默认画布中心附近随机偏移，避免重叠 */
   position?: SemanticPosition | PositionFraction
+  /** 相对已有对象定位，优先级高于 position */
+  relativeTo?: RelativeTo
   /** 仅直线有效：起止点比例坐标，缺省时画水平线 */
   from?: PositionFraction
   to?: PositionFraction
@@ -141,6 +156,13 @@ export const SEMANTIC_POSITIONS: readonly SemanticPosition[] = [
 ]
 
 export const DIRECTIONS: readonly Direction[] = ['left', 'right', 'up', 'down']
+
+export const RELATIVE_RELATIONS: readonly RelativeRelation[] = [
+  'left-of',
+  'right-of',
+  'above',
+  'below',
+]
 
 export const SHAPE_LABELS: Record<ShapeType, string> = {
   circle: '圆形',

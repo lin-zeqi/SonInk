@@ -3,6 +3,8 @@ import type {
   DrawProps,
   DslCommand,
   MoveCommand,
+  RelativeRelation,
+  RelativeTo,
   ResizeCommand,
   TargetSpec,
 } from '../dsl/types'
@@ -33,7 +35,7 @@ const REDO_PATTERN = /重做|取消撤销|恢复/
 
 const UNDO_PATTERN = /撤销|撤回|回退|退回|上一步|悔棋/
 
-const DRAW_VERB_PATTERN = /画|绘|来|加|添|整|生成|创建/
+const DRAW_VERB_PATTERN = /画|绘|来|加|添|整|搞|弄|生成|创建/
 
 const DELETE_PATTERN = /删掉|删除|去掉|移除|擦掉|删/
 
@@ -66,6 +68,25 @@ const DIRECTION_MAP: Record<string, Direction> = {
 /** 绝对大小："半径五十"、"大小50"、"尺寸为80" */
 const ABSOLUTE_SIZE_PATTERN = /(?:半径|大小|尺寸)(?:为|是)?([零一二两三四五六七八九十百\d]+)/
 
+/** 相对定位："在圆的右边"、"在红色的圆左边"（锚点描述限长防贪婪误吞全句） */
+const RELATIVE_PATTERN =
+  /在(.{1,10}?)的?(右边|右侧|右面|左边|左侧|左面|上面|上方|上边|下面|下方|下边)/
+
+const RELATION_MAP: Record<string, RelativeRelation> = {
+  右边: 'right-of',
+  右侧: 'right-of',
+  右面: 'right-of',
+  左边: 'left-of',
+  左侧: 'left-of',
+  左面: 'left-of',
+  上面: 'above',
+  上方: 'above',
+  上边: 'above',
+  下面: 'below',
+  下方: 'below',
+  下边: 'below',
+}
+
 function extractSize(text: string): { size: DrawProps['size'] | undefined; rest: string } {
   const absolute = text.match(ABSOLUTE_SIZE_PATTERN)
   if (absolute) {
@@ -79,11 +100,27 @@ function extractSize(text: string): { size: DrawProps['size'] | undefined; rest:
 }
 
 function parseDraw(text: string): ParseResult {
-  const shape = lookup(text, SHAPE_SYNONYMS)
+  // 相对定位锚点先行剥离："在圆的右边画方形"——锚点（圆）不能参与新图形的槽位提取
+  let working = text
+  let relativeTo: RelativeTo | undefined
+  const rel = working.match(RELATIVE_PATTERN)
+  if (rel) {
+    const anchorShape = lookup(rel[1], SHAPE_SYNONYMS)
+    const anchorColor = lookup(rel[1], COLOR_SYNONYMS)
+    if (anchorShape || anchorColor) {
+      relativeTo = { relation: RELATION_MAP[rel[2]] }
+      if (anchorShape) relativeTo.shape = anchorShape
+      if (anchorColor) relativeTo.color = anchorColor
+      working = working.replace(rel[0], '')
+    }
+  }
+
+  const shape = lookup(working, SHAPE_SYNONYMS)
   if (!shape) return MISS
 
   const props: DrawProps = {}
-  const { size, rest } = extractSize(text)
+  if (relativeTo) props.relativeTo = relativeTo
+  const { size, rest } = extractSize(working)
   if (size !== undefined) props.size = size
 
   const color = lookup(rest, COLOR_SYNONYMS)
@@ -240,6 +277,21 @@ function parseSingle(raw: string): ParseResult {
   }
 
   return MISS
+}
+
+/**
+ * 有绘制意图但说不出图形（"画一个"、"画那个那个那个"）——
+ * 去掉动词、指代与量词后没有任何剩余信息时，由管道发起规则级追问，
+ * 不浪费一次 LLM 调用。注意"画一个人"residual 为"人"，仍交给 LLM。
+ */
+export function isShapeMissing(raw: string): boolean {
+  const text = normalize(raw)
+  if (!DRAW_VERB_PATTERN.test(text)) return false
+  if (lookup(text, SHAPE_SYNONYMS) !== undefined) return false
+  const residual = text
+    .replace(new RegExp(DRAW_VERB_PATTERN.source, 'g'), '')
+    .replace(/那个|这个|它|一个|个|一|点|东西|图形|什么|帮忙/g, '')
+  return residual.length === 0
 }
 
 /**

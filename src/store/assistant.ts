@@ -13,11 +13,16 @@ export const useAssistantStore = defineStore('assistant', {
     ask: '',
     /** 破坏性操作（清空画布）的二次确认问题，非空时确认面板显示中 */
     confirm: '',
+    /** 规则级追问（缺图形词），非空时追问面板显示中，下一条输入按回答处理 */
+    clarify: '',
     messages: [] as ChatMessage[],
   }),
   actions: {
     setConfirm(question: string) {
       this.confirm = question
+    },
+    setClarify(question: string) {
+      this.clarify = question
     },
     /** 开始一次慢路径调用；continuation=true 表示是追问的回答，沿用上下文 */
     begin(userText: string, continuation: boolean) {

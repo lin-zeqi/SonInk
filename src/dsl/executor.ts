@@ -22,6 +22,7 @@ import {
   type ExecResult,
   type MoveCommand,
   type PositionFraction,
+  type RelativeTo,
   type ResizeCommand,
   type SelectCommand,
   type SemanticPosition,
@@ -209,7 +210,59 @@ function describe(obj: CanvasObject): string {
   return SHAPE_LABELS[obj.shape]
 }
 
+/**
+ * 相对定位（"在圆的右边画方形"）：按特征找锚点对象（多个匹配取最近创建的），
+ * 用其包围盒 + 新对象大小算出新中心，转回比例坐标交给 createNode。
+ */
+function resolveRelativePosition(
+  rel: RelativeTo,
+  newSize: number
+): { ok: true; position: PositionFraction } | { ok: false; message: string } {
+  const anchors = useObjectsStore().objects.filter(
+    (o) =>
+      (rel.shape === undefined || o.shape === rel.shape) &&
+      (rel.color === undefined || o.color === rel.color)
+  )
+  const anchor = anchors[anchors.length - 1]
+  const node = anchor ? findNode(anchor.id) : null
+  if (!node) {
+    return {
+      ok: false,
+      message: `画布上没找到要参照的${rel.shape ? SHAPE_LABELS[rel.shape] : '对象'}`,
+    }
+  }
+
+  const box = node.getClientRect()
+  const gap = 16
+  let x = box.x + box.width / 2
+  let y = box.y + box.height / 2
+  switch (rel.relation) {
+    case 'right-of':
+      x = box.x + box.width + gap + newSize
+      break
+    case 'left-of':
+      x = box.x - gap - newSize
+      break
+    case 'above':
+      y = box.y - gap - newSize
+      break
+    case 'below':
+      y = box.y + box.height + gap + newSize
+      break
+  }
+
+  const { width, height } = getCanvasSize()
+  const clamp = (v: number) => Math.min(0.98, Math.max(0.02, v))
+  return { ok: true, position: { fx: clamp(x / width), fy: clamp(y / height) } }
+}
+
 function execDraw(cmd: DrawCommand): ExecResult {
+  if (cmd.props?.relativeTo) {
+    const resolved = resolveRelativePosition(cmd.props.relativeTo, resolveSize(cmd.props.size))
+    if (!resolved.ok) return { ok: false, message: resolved.message }
+    cmd = { ...cmd, props: { ...cmd.props, position: resolved.position } }
+  }
+
   const id = `obj-${nextId++}`
   const node = createNode(cmd, id)
   getMainLayer().add(node)
