@@ -1,4 +1,4 @@
-import type { SemanticPosition, SemanticSize, ShapeType } from '../dsl/types'
+import type { ComparisonQualifier, SemanticPosition, SemanticSize, ShapeType, SpatialQualifier } from '../dsl/types'
 
 /**
  * 词法资源：同义词表与文本归一化。
@@ -99,6 +99,44 @@ export const POSITION_SYNONYMS: ReadonlyArray<[string, SemanticPosition]> = [
   ['下方', 'bottom'],
   ['底部', 'bottom'],
   ['下边', 'bottom'],
+]
+
+/** 空间方位限定词：长词在前，避免"左边"截胡"最左边那个" */
+export const SPATIAL_QUALIFIERS: ReadonlyArray<[string, SpatialQualifier]> = [
+  ['最左边那个', 'leftmost'],
+  ['最右边那个', 'rightmost'],
+  ['最上面那个', 'topmost'],
+  ['最下面那个', 'bottommost'],
+  ['最左边', 'leftmost'],
+  ['最右边', 'rightmost'],
+  ['最上面', 'topmost'],
+  ['最下面', 'bottommost'],
+  ['左边那个', 'leftmost'],
+  ['右边那个', 'rightmost'],
+  ['上面那个', 'topmost'],
+  ['下面那个', 'bottommost'],
+  ['中间那个', 'center'],
+  ['中间', 'center'],
+  ['中心', 'center'],
+  ['左边', 'leftmost'],
+  ['右边', 'rightmost'],
+  ['上面', 'topmost'],
+  ['下面', 'bottommost'],
+]
+
+/** 序数匹配："第二个"、"第十二个"——中文/阿拉伯数字混合 */
+export const ORDINAL_PATTERN = /第([零一二两三四五六七八九十百\d]+)个/
+
+/** 比较限定：最大/最小（按包围盒面积） */
+export const COMPARISON_SYNONYMS: ReadonlyArray<[string, ComparisonQualifier]> = [
+  ['最大的那个', 'largest'],
+  ['最小的那个', 'smallest'],
+  ['最大那个', 'largest'],
+  ['最小那个', 'smallest'],
+  ['最大的', 'largest'],
+  ['最小的', 'smallest'],
+  ['最大', 'largest'],
+  ['最小', 'smallest'],
 ]
 
 const CN_DIGITS: Record<string, number> = {
