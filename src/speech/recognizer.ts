@@ -1,16 +1,34 @@
+export type ListenState = 'idle' | 'listening'
+
+export interface RecognizerCallbacks {
+  /** 流式中间结果 */
+  onInterim?: (text: string) => void
+  /** 一条完整指令 */
+  onFinal?: (text: string) => void
+  onStateChange?: (state: ListenState) => void
+  onError?: (error: string) => void
+}
+
+export interface Recognizer {
+  start(): void
+  stop(): void
+  isRunning(): boolean
+}
+
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition
 
-export function isSpeechSupported() {
+export function isSpeechSupported(): boolean {
   return Boolean(SR)
 }
 
 /**
  * Web Speech API 封装。
- * 对外契约：onInterim(text) 流式中间结果，onFinal(text) 一条完整指令。
+ * 对外契约仅 RecognizerCallbacks 两个文本回调，
  * 备用方案 B（七牛云 ASR）如启用，将实现同一契约替换本模块。
  */
-export function createRecognizer({ onInterim, onFinal, onStateChange, onError } = {}) {
+export function createRecognizer(callbacks: RecognizerCallbacks = {}): Recognizer | null {
   if (!SR) return null
+  const { onInterim, onFinal, onStateChange, onError } = callbacks
 
   const rec = new SR()
   rec.lang = 'zh-CN'

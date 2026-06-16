@@ -61,7 +61,7 @@
 
 | 层 | 选型 | 选型理由 |
 |---|---|---|
-| 前端框架 | Vue 3 + Vite | 单人项目开发效率高，评委 `npm i && npm run dev` 即可复现 |
+| 前端框架 | Vue 3 + TypeScript + Vite | 单人项目开发效率高，评委 `npm i && npm run dev` 即可复现；DSL 指令契约用 TS 类型定义，解析器与执行引擎两端获得编译期约束 |
 | 画布 | Konva.js | 对象模型天然支持图形的选中/移动/缩放/层级管理，比裸 Canvas 大幅减少状态管理工作量 |
 | 语音识别 ASR | 主方案：Web Speech API（`SpeechRecognition`）；备用方案 B：MediaRecorder 录音 + 七牛云 ASR | 主方案浏览器原生、零成本、流式识别延迟最低，**国内网络下需使用 Edge 浏览器**（走 Azure 服务；Chrome 走 Google 服务不可用）。备用方案详见 §6.1 |
 | 语音合成 TTS | Web Speech API（`speechSynthesis`） | 浏览器原生，用于操作结果播报与容错追问 |

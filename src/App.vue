@@ -1,18 +1,18 @@
-<script setup>
+<script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import Konva from 'konva'
 import { initStage, getMainLayer } from './canvas/stage'
-import { createRecognizer, isSpeechSupported } from './speech/recognizer'
+import { createRecognizer, isSpeechSupported, type Recognizer } from './speech/recognizer'
 import { useCommandStore } from './store/command'
 import CaptionBar from './components/CaptionBar.vue'
 import DebugInput from './components/DebugInput.vue'
 
-const canvasContainer = ref(null)
+const canvasContainer = ref<HTMLDivElement | null>(null)
 const store = useCommandStore()
-let recognizer = null
+let recognizer: Recognizer | null = null
 
 onMounted(() => {
-  initStage(canvasContainer.value)
+  initStage(canvasContainer.value!)
 
   // 临时验证图形：确认 Konva 渲染链路可用，PR #3 接入执行引擎后移除
   getMainLayer().add(

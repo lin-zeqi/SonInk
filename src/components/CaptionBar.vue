@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 import { useCommandStore } from '../store/command'
 
 const store = useCommandStore()
