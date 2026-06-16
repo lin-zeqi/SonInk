@@ -38,6 +38,11 @@ export function clearPendingAttrs(id: string): void {
   pendingAttrs.delete(id)
 }
 
+/** 读取某节点动画终态属性（动画进行中时存在），用于基于终点而非中间帧叠加新变换 */
+export function getPendingAttrs(id: string): Record<string, number | string> | undefined {
+  return pendingAttrs.get(id)
+}
+
 export function captureSnapshot(): Snapshot {
   const store = useObjectsStore()
   const metaById = new Map(store.objects.map((o) => [o.id, o] as const))

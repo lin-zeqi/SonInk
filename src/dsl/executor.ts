@@ -5,6 +5,7 @@ import { findNode, syncHighlight } from '../canvas/highlight'
 import {
   captureSnapshot,
   clearPendingAttrs,
+  getPendingAttrs,
   restoreSnapshot,
   setPendingAttrs,
   snapshotChanged,
@@ -85,6 +86,18 @@ function animateTo(node: Konva.Shape, attrs: Record<string, number | string>): v
       syncHighlight()
     },
   })
+}
+
+/**
+ * 节点的「终态」坐标：若上一次平移动画仍在进行，返回其目标 x/y 而非中间帧值。
+ * 方向相对移动据此叠加，避免连续两次移动累加到动画中间坐标导致终点偏差。
+ */
+function settledXY(node: Konva.Shape): { x: number; y: number } {
+  const pending = getPendingAttrs(node.id())
+  return {
+    x: typeof pending?.x === 'number' ? pending.x : node.x(),
+    y: typeof pending?.y === 'number' ? pending.y : node.y(),
+  }
 }
 
 let nextId = 1
@@ -582,7 +595,10 @@ function execMove(cmd: MoveCommand): ExecResult {
     const [vx, vy] = DIRECTION_VECTORS[direction]
     for (const obj of matched) {
       const node = findNode(obj.id)
-      if (node) animateTo(node, { x: node.x() + vx * distance, y: node.y() + vy * distance })
+      if (node) {
+        const s = settledXY(node)
+        animateTo(node, { x: s.x + vx * distance, y: s.y + vy * distance })
+      }
     }
     return { ok: true, message: `已向${DIRECTION_LABELS[direction]}移动` }
   }
@@ -606,7 +622,8 @@ function execMove(cmd: MoveCommand): ExecResult {
       ? cmd.distance
       : Math.min(width, height) * MOVE_FRACTIONS[cmd.distance ?? 'medium']
   const [vx, vy] = DIRECTION_VECTORS[direction]
-  animateTo(node, { x: node.x() + vx * distance, y: node.y() + vy * distance })
+  const s = settledXY(node)
+  animateTo(node, { x: s.x + vx * distance, y: s.y + vy * distance })
   return { ok: true, message: `已向${DIRECTION_LABELS[direction]}移动` }
 }
 
@@ -663,6 +680,8 @@ function resizeOne(obj: CanvasObject, cmd: ResizeCommand): ExecResult {
       node.offset({ x: cx, y: cy })
       node.move({ x: cx, y: cy })
     }
+    // 描边宽度不随缩放变粗：scale 只改变几何尺寸，strokeWidth 保持设定值
+    node.strokeScaleEnabled(false)
     const factor = cmd.scale ?? 1
     animateTo(node, {
       scaleX: (node.scaleX() || 1) * factor,
