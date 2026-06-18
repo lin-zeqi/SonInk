@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "typecheck": "vue-tsc --noEmit",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "smoke": "npx tsx scripts/parser-smoke.ts",
+    "e2e": "node scripts/e2e-tts.mjs && node scripts/e2e-undo.mjs && node scripts/e2e-robust.mjs && node scripts/e2e-canvas-power.mjs && node scripts/e2e-resize-move.mjs && node scripts/e2e-perf-stress.mjs && node scripts/e2e-multi-res.mjs"
   },
   "dependencies": {
     "konva": "^9.3.0",

@@ -101,6 +101,21 @@ await page.click('.history-btn') // 点击撤销按钮
 await new Promise((r) => setTimeout(r, 600))
 await expect('点击撤销按钮生效', (s) => s.nodes.length === 0 && s.feedback.includes('已撤销'))
 
+// —— 场景 7：复合指令中混入 undo（feat/16 隔离修复）——
+// 经 JSON 通道注入 [画圆, 撤销, 画方]：撤销不再与绘制共用一次快照事务，
+// 应按 undo 边界切段——画圆→撤销(回退空)→画方，最终只剩方块。
+await send('清空画布')
+await send('确认')
+await send(
+  '[{"action":"draw","shape":"circle","props":{"color":"#e53935"}},{"action":"undo"},{"action":"draw","shape":"rect","props":{"color":"#1e88e5"}}]'
+)
+await expect(
+  '复合内 undo 隔离：最终只剩方块',
+  (s) => s.nodes.length === 1 && s.nodes[0].cls === 'Rect' && s.nodes[0].fill === '#1e88e5'
+)
+await send('撤销')
+await expect('撤销移除方块（栈顺序正确）', (s) => s.nodes.length === 0 && s.feedback.includes('已撤销'))
+
 await page.screenshot({ path: 'scripts/e2e-undo.png' })
 await browser.close()
 

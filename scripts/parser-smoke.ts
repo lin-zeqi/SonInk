@@ -133,6 +133,25 @@ for (const [input, expected] of refCases) {
   console.log(`${ok ? 'OK ' : 'FAIL'} "${input}" -> ${JSON.stringify(target)}${ok ? '' : `（预期含 ${JSON.stringify(expected)}）`}`)
 }
 
+// relativeTo relation 解析（feat/16 新增 near/inside）：锚点特征 + relation 应被解析进
+// draw 命令的 props.relativeTo。坐标计算（executor.resolveRelativePosition）需画布，由 e2e 覆盖。
+const relCases: Array<[string, Record<string, unknown>]> = [
+  ['在圆的右边画一个方形', { relation: 'right-of', shape: 'circle' }],
+  ['在圆和三角之间画矩形', { relation: 'between', shape: 'circle', shape2: 'triangle' }],
+  ['在圆旁边画一个方形', { relation: 'near', shape: 'circle' }],
+  ['在红色的圆附近画三角', { relation: 'near', color: '#e53935' }],
+  ['在圆里面画一个三角', { relation: 'inside', shape: 'circle' }],
+  ['在方块内部画个圆', { relation: 'inside', shape: 'rect' }],
+]
+console.log('\n—— relativeTo relation ——')
+for (const [input, expected] of relCases) {
+  const r = parseCommand(input)
+  const cmd = r.matched && r.commands[0] ? (r.commands[0] as { props?: { relativeTo?: Record<string, unknown> } }) : undefined
+  const rel = cmd?.props?.relativeTo ?? {}
+  const ok = Object.entries(expected).every(([k, v]) => rel[k] === v)
+  console.log(`${ok ? 'OK ' : 'FAIL'} "${input}" -> ${JSON.stringify(rel)}${ok ? '' : `（预期含 ${JSON.stringify(expected)}）`}`)
+}
+
 // 语义模板展开（feat/14 起为多 path 组合，非单 path）：仅 pipeline 在无 LLM 时调用。
 // 锁定命令数与"全部为 path draw"，模板改动需同步更新预期值。
 const tplCases: Array<[string, number | null]> = [

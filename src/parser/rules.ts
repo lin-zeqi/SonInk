@@ -86,9 +86,9 @@ const DIRECTION_MAP: Record<string, Direction> = {
 const ABSOLUTE_SIZE_PATTERN = /(?:半径|大小|尺寸)(?:为|是)?([零一二两三四五六七八九十百\d]+)/
 
 /** 相对定位："在圆的右边"、"在红色的圆左边"（锚点描述限长防贪婪误吞全句） */
-/** "在圆的右边画方形"——单锚点相对定位 */
+/** "在圆的右边画方形"——单锚点相对定位；near（旁边/附近）、inside（里面/里头/内部）同走此式 */
 const RELATIVE_PATTERN =
-  /在(.{1,10}?)的?(右边|右侧|右面|左边|左侧|左面|上面|上方|上边|下面|下方|下边)/
+  /在(.{1,10}?)的?(右边|右侧|右面|左边|左侧|左面|上面|上方|上边|下面|下方|下边|旁边|附近|里面|里头|内部)/
 
 /** "在圆和三角之间画矩形"——双锚点之间定位，须在 CLAUSE_SPLITTER 之前匹配 */
 const BETWEEN_PATTERN = /在(.{1,8}?)(?:和|与|以及)(.{1,8}?)的?(?:之间|中间)/
@@ -108,6 +108,11 @@ const RELATION_MAP: Record<string, RelativeRelation> = {
   下边: 'below',
   之间: 'between',
   中间: 'between',
+  旁边: 'near',
+  附近: 'near',
+  里面: 'inside',
+  里头: 'inside',
+  内部: 'inside',
 }
 
 function extractSize(text: string): { size: DrawProps['size'] | undefined; rest: string } {

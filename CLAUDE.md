@@ -10,14 +10,17 @@ npm run dev          # Start Vite dev server (http://localhost:5173)
 npm run build        # Typecheck (vue-tsc --noEmit) + Vite production build
 npm run typecheck    # Typecheck only (vue-tsc --noEmit)
 npm run preview      # Preview production build locally
-npx tsx scripts/parser-smoke.ts          # Parser smoke test (no browser needed)
+npm run smoke        # Parser smoke test (npx tsx scripts/parser-smoke.ts, no browser needed)
+npm run e2e          # Run all self-asserting e2e scripts in sequence (needs `npm run dev` in another terminal)
 ```
 
-`parser-smoke.ts` exercises the rule engine (`parseCommand`, `isShapeMissing`, `parseBrushStep`, `tryExpandTemplate`, advanced-reference target parsing, clause splitting) directly in Node.js — no browser, no Konva, no LLM. The `isShapeMissing` / `parseBrushStep` / advanced-reference / `tryExpandTemplate` groups carry OK/FAIL assertions; the main `parseCommand` group only prints output for eyeballing. Run it after any parser/lexicon/template change to catch regressions instantly. Requires `tsx` (TypeScript execute); available via `npx` without a local install.
+`parser-smoke.ts` exercises the rule engine (`parseCommand`, `isShapeMissing`, `parseBrushStep`, `tryExpandTemplate`, advanced-reference target parsing, clause splitting) directly in Node.js — no browser, no Konva, no LLM. The `isShapeMissing` / `parseBrushStep` / advanced-reference / `relativeTo relation` / `tryExpandTemplate` groups carry OK/FAIL assertions; the main `parseCommand` group only prints output for eyeballing. Run it after any parser/lexicon/template change to catch regressions instantly. Requires `tsx` (TypeScript execute); available via `npx` without a local install.
 
 E2E scripts use `puppeteer-core` driving local Edge. Run `npm run dev` first, then in another terminal:
 
 ```bash
+node scripts/e2e-perf-stress.mjs     # PR #16: 60-object draw/undo/redo/replay stress
+node scripts/e2e-multi-res.mjs       # PR #16: three viewports — fraction consistency / resize-keeps-center / export
 node scripts/e2e-canvas-power.mjs    # PR #13: templates / text / style / export / replay / drag
 node scripts/e2e-robust.mjs          # PR #12: relative positioning / shape-missing追问 / colloquial verbs
 node scripts/e2e-tts.mjs             # PR #11: TTS feedback / clear confirmation
@@ -116,7 +119,7 @@ The rule engine has one local fallback _before_ hitting LLM:
 
 1. **Replay guard**: If `history.replaying`, all input is rejected ("回放进行中").
 2. **JSON passthrough**: If text starts with `{` or `[`, parse as raw DSL JSON (debug channel).
-3. **Confirm wait**: If `assistant.confirm` is set (clear-canvas confirmation pending), the input is tested against CONFIRM_YES/CANCEL patterns. If neither, it falls through as a new command (abandoning the pending clear).
+3. **Confirm wait**: If `assistant.confirm` is set (clear-canvas confirmation pending), the input is tested against CONFIRM_YES/CANCEL patterns (cancel also fires on any text containing 不). If neither matches, it falls through as a new command (abandoning the pending clear).
 4. **Clarify wait**: If `assistant.clarify` is set (shape-missing追问), the input is prepended with "画" and re-parsed as a draw command. Cancel works too.
 5. **Ask wait**: If `assistant.ask` is set (LLM asked a follow-up question), the input is treated as a continuation of the LLM conversation (`runSlowPath(text, true)`).
 6. **Brush active**: If `brushActive` (free-brush mode entered), input is parsed by `parseBrushStep()` only — direction words (`往右/往下/往左/往上` and diagonals/step-size) extend the live stroke, `停` finalizes via `finishBrush()` → `executeAll`, `取消` aborts. All other commands are blocked while brushing.
@@ -134,10 +137,12 @@ This state-machine ordering means a single utterance can trigger confirmation, c
 
 `dsl/types.ts` defines every command type (`DrawCommand`, `MoveCommand`, `ResizeCommand`, `StyleCommand`, etc.) and semantic value types (`SemanticPosition`, `SemanticSize`, `PositionFraction`, `RelativeTo`).
 
+`RelativeTo.relation` supports `left-of`/`right-of`/`above`/`below` (single anchor), `between` (two anchors → midpoint), and (feat/16) `near` (placed adjacent to the right of the anchor) / `inside` (centered within the anchor's bounding box, errors if the anchor is too small to hold the new object). Relation→pixel resolution lives in `resolveRelativePosition` (`dsl/executor.ts`); it uses **fixed** placement (no `Math.random()`) so snapshots/replay stay reproducible. Chinese triggers are post-anchor words in `RELATION_MAP` (`rules.ts`): 旁边/附近→near, 里面/里头/内部→inside. `dsl/schema.ts` validates `relation` against `RELATIVE_RELATIONS`, so new relations are accepted automatically once added to that constant.
+
 Key constraints enforced by `dsl/schema.ts` (runtime validation):
 - LLM output MUST be validated through `validateDsl()` before execution — never trust it.
 - Positions are **0–1 proportional coordinates** (`fx`, `fy`) or nine-grid semantic labels. Absolute pixel coordinates are rejected. This prevents LLM hallucination of pixel values.
-- Colors must be `#hex` format (3/6/8 digits). Named colors like "red" are rejected — the rule engine's `lexicon.ts` converts Chinese color names to hex before they become DSL.
+- Colors must be `#hex` format (3–8 hex digits, `/^#[0-9a-fA-F]{3,8}$/`). Named colors like "red" are rejected — the rule engine's `lexicon.ts` converts Chinese color names to hex before they become DSL.
 - Every action has required fields enforced: `draw` requires valid `shape` (and `text` for text shapes, `points` for path shapes); `move` requires `direction`/`position`/`relativeTo`; `resize` requires `scale` or `size`; `style` requires `color`.
 - Path `points` arrays must have at least 2 entries; each point must be a valid `{fx, fy}` fraction. Optional `tension` (0–1) renders the path as a smoothed curve instead of straight segments (used for round forms with few points).
 - All semantic→pixel conversion happens in `dsl/executor.ts` only.
@@ -167,7 +172,7 @@ These run in `applyPostFilter` after feature matching (shape/color). **Caveat**:
 
 **autoCompact** (`executor.ts`): LLM-generated coordinates often spread too wide. Before execution, `autoCompact` measures the horizontal span of all draw commands in a batch — if spread > 35% of canvas width, it compresses toward center to 30%, preserving relative proportions.
 
-**Coordinate system**: Nine-grid positions are [0.33, 0.5, 0.67] (widened from an earlier [0.2, 0.5, 0.8]); size fractions are small 0.07 / medium 0.13 / large 0.20, tuned up for better visual weight.
+**Coordinate system**: Nine-grid X coordinates are [0.33, 0.5, 0.67]; Y coordinates are [0.28, 0.5, 0.72] (asymmetric — top/bottom rows sit slightly closer to center than the left/right columns; see `POSITION_FRACTIONS` in `dsl/types.ts`). Widened from an earlier symmetric [0.2, 0.5, 0.8]. Size fractions are small 0.07 / medium 0.13 / large 0.20, tuned up for better visual weight.
 
 ### executeAll Transaction Flow
 
@@ -206,6 +211,8 @@ Unlike a traditional command pattern, undo uses **whole-state snapshots** (`hist
 
 `pendingAttrs` (`history/snapshot.ts`) is a registry of animation end-states. When `animateTo()` starts a move/resize transition (0.35s), it registers the final geometry in `pendingAttrs`. If a snapshot is captured mid-animation, `captureSnapshot()` reads `pendingAttrs` to get the correct final geometry instead of the current in-between values. After the animation completes, entries are cleared. This means undo always restores the intended end state, never a mid-transition frame.
 
+`captureSnapshot()` also scrubs **draw-animation artifacts** (`revealShape`/`revealStrokes` leave a dash stroke + semi-transparent fill mid-draw): it deletes `dash`/`dashOffset` and restores each non-line node's `fill` to its registered final color (from the object registry) before serializing. So a snapshot taken while a stroke is still drawing still records the completed visual.
+
 ### Stores (Pinia)
 
 | Store | Purpose |
@@ -242,7 +249,7 @@ Shortcuts are suppressed when focus is in an `<input>` or `<textarea>`.
 
 `speech/recognizer.ts`: Web Speech API wrapper. The public API is just `onInterim`/`onFinal` callbacks — designed so a backup ASR (e.g., Qiniu cloud) could implement the same interface. Auto-restarts on silence timeout.
 
-`speech/tts.ts`: TTS broadcasts execution results/confirmations/questions. During playback, ASR is paused to prevent feedback loops (`App.vue` manages this via `onSpeakStateChange`).
+`speech/tts.ts`: TTS broadcasts execution results/confirmations/questions. During playback, ASR is paused to prevent feedback loops (`App.vue` manages this via `onSpeakStateChange`). A **watchdog timer** (estimated duration `text.length * 220ms / rate + 2000ms`) force-resumes ASR if the utterance finishes without firing `onend`/`onerror` — some browsers never signal completion, which would otherwise freeze recognition permanently.
 
 ### LLM Configuration
 

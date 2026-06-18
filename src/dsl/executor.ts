@@ -432,6 +432,16 @@ function resolveRelativePosition(
     case 'below':
       y = box.y + box.height + gap + newSize
       break
+    case 'near':
+      // 靠近锚点：紧邻右侧放置，与之不重叠（取固定方位，避免随机破坏快照可复现性）
+      x = box.x + box.width + gap + newSize
+      break
+    case 'inside':
+      // 在锚点包围盒内部居中（x/y 已初始化为锚点中心）；容器放不下新对象则报错
+      if (newSize * 2 > box.width || newSize * 2 > box.height) {
+        return { ok: false, message: '目标容器太小，放不下' }
+      }
+      break
   }
 
   const { width, height } = getCanvasSize()
@@ -903,9 +913,44 @@ export function executeAll(commands: DslCommand[]): ExecResult {
   // 自动收紧：如果本批次的 draw 指令间距过大，整体压缩到紧凑范围
   autoCompact(commands)
 
+  // 按 undo/redo 边界切段：undo/redo 直接操作历史栈，绝不能与绘制等 mutating
+  // 指令共用同一次快照事务，否则会把"批前快照"压在 undo 之后，撤销栈顺序错乱。
+  // 常见路径（整批无 undo/redo）只产生一段，行为与切段前完全一致。
+  const messages: string[] = []
+  let segment: DslCommand[] = []
+  const flushSegment = (): ExecResult | null => {
+    if (segment.length === 0) return null
+    const r = runSegment(segment)
+    segment = []
+    if (!r.ok) return r
+    if (r.message) messages.push(r.message)
+    return null
+  }
+  for (const cmd of commands) {
+    if (cmd.action === 'undo' || cmd.action === 'redo') {
+      const failed = flushSegment()
+      if (failed) return failed
+      const r = execute(cmd)
+      if (!r.ok) return r
+      if (r.message) messages.push(r.message)
+    } else {
+      segment.push(cmd)
+    }
+  }
+  const failed = flushSegment()
+  if (failed) return failed
+
+  return { ok: true, message: messages.join('，') || '已开始描画...' }
+}
+
+/**
+ * 执行一段不含 undo/redo 的指令子序列，作为单个快照事务：
+ * 执行前抓快照，全部成功且状态有变则提交历史；中途失败则整体回滚。
+ */
+function runSegment(commands: DslCommand[]): ExecResult {
   const before = commands.some(isMutating) ? captureSnapshot() : null
 
-  // 记录执行前的节点数，用于收集本批次新增的 path 节点做逐笔描画
+  // 记录执行前的节点数，用于收集本段新增的 path 节点做逐笔描画
   const nodeCountBefore = getMainLayer().getChildren().length
 
   const messages: string[] = []
@@ -921,7 +966,7 @@ export function executeAll(commands: DslCommand[]): ExecResult {
     if (result.message) messages.push(result.message)
   }
 
-  // 逐笔描画：收集本批次新增的 path 节点，按创建顺序依次显现
+  // 逐笔描画：收集本段新增的 path 节点，按创建顺序依次显现
   const allNewNodes = getMainLayer().getChildren().slice(nodeCountBefore)
   const pathNodes: Konva.Shape[] = []
   for (const n of allNewNodes) {
@@ -934,5 +979,5 @@ export function executeAll(commands: DslCommand[]): ExecResult {
   }
 
   if (before && snapshotChanged(before)) useHistoryStore().commit(before)
-  return { ok: true, message: messages.join('，') || '已开始描画...' }
+  return { ok: true, message: messages.join('，') }
 }

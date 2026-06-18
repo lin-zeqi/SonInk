@@ -48,7 +48,14 @@ export type SpatialQualifier = 'leftmost' | 'rightmost' | 'topmost' | 'bottommos
 export type ComparisonQualifier = 'largest' | 'smallest'
 
 /** 相对已有对象的方位关系 */
-export type RelativeRelation = 'left-of' | 'right-of' | 'above' | 'below' | 'between'
+export type RelativeRelation =
+  | 'left-of'
+  | 'right-of'
+  | 'above'
+  | 'below'
+  | 'between'
+  | 'near'
+  | 'inside'
 
 /**
  * 相对定位锚点（"在圆的右边画一个方形"）。
@@ -242,6 +249,8 @@ export const RELATIVE_RELATIONS: readonly RelativeRelation[] = [
   'above',
   'below',
   'between',
+  'near',
+  'inside',
 ]
 
 export const SHAPE_LABELS: Record<ShapeType, string> = {

@@ -1,7 +1,7 @@
 # 未完成事项清单
 
 > 汇总自各 dev-log 的遗留项 + 路线图剩余工作 + 必须真机/真实环境才能做的验证。
-> 更新时间：2026-06-14。完成一项划掉一项；提交前同步到 design.md「未完成说明」。
+> 更新时间：2026-06-18。完成一项划掉一项；提交前同步到 design.md「未完成说明」。
 
 ## 一、待开发（按优先级）
 
@@ -16,7 +16,9 @@
 ### 功能增强（视时间取舍）
 
 - [x] 高级指代消解（能力 #15a）："左边那个"/"第二个"/"最大的那个"
-- [x] relativeTo 扩展：between（"在圆和三角之间"）——near、inside 未做
+- [x] relativeTo 扩展：between（"在圆和三角之间"）、near（"在圆旁边/附近"）、
+  inside（"在圆里面/内部"）——feat/16 全部完成（near 固定紧邻右侧、inside 居中，
+  不用随机以保快照可复现）
 - [x] 自由笔刷（能力 #19）："开始画线…往右…往下…停"
 - [x] ~~组合图形"组"概念~~ — 已通过 groupName/groupId/part 实现（feat/13-canvas-power 工作区），模板改为单 path，LLM 使用多 path + 共享 groupName
 - [x] 文字缩放：fontSize 变化需同步重算居中偏移，目前 resize 对 text 报"不支持"
@@ -29,25 +31,30 @@
 - [x] 直线缩放后 strokeWidth 随 scale 变粗 —— 缩放前 `strokeScaleEnabled(false)`
 - [x] TTS 中断时识别恢复依赖 utterance onend/onerror，个别浏览器可能不触发
   —— 加按估算时长的看门狗定时器兜底强制恢复（tts.ts）
-- [ ] 模板线条在非 3:2 画布上轻微变形（fx 偏移按 3:2 固定折减 0.67）
-  —— 模板引擎已不接入管线，低优先级
-- [ ] LLM 复合指令混入 undo/redo 时历史栈顺序不直观（不破坏状态，罕见路径）
-- [ ] 连续多次移动各计一条撤销历史，未做合并（属设计取舍，暂不合并）
+- [~] 模板线条在非 3:2 画布上轻微变形（fx 偏移按 3:2 固定折减 0.67）
+  —— **经评审决定不修**：模板引擎已不接入管线，改的是死代码，保持现状
+- [x] LLM 复合指令混入 undo/redo 时历史栈顺序不直观
+  —— feat/16 在 `executeAll` 内按 undo/redo 边界切段，每段独立快照事务，
+  undo/redo 单独执行不进事务；整批无 undo/redo 时行为与切段前完全一致
+- [~] 连续多次移动各计一条撤销历史，未做合并
+  —— **经评审决定不修**：属设计取舍，保持现状
 
-## 二、E2E 测试（全部通过 ✅）
+## 二、E2E 测试
 
-全部 8 个 e2e 脚本已在本地 Edge 上跑通：
+PR #6–#13 的 8 个脚本已在本地 Edge 上跑通；feat/16 新增 2 个脚本待本机实跑：
 
 | 脚本 | 覆盖 PR | 验证点 |
 |---|---|---|
 | `e2e-anim.mjs` | #7 | 渐进绘制动画 |
 | `e2e-repro.mjs` | #6 | 选中/移动/删除/连接词拆分 |
 | `e2e-llm.mjs` | #8 | LLM 通道（mock） |
-| `e2e-undo.mjs` | #9 | 撤销/重做事务快照 |
+| `e2e-undo.mjs` | #9 | 撤销/重做事务快照（feat/16 加复合内 undo 隔离断言） |
 | `e2e-resize-move.mjs` | #10 | 缩放+移动含过渡动画 |
 | `e2e-tts.mjs` | #11 | TTS 反馈+清空确认 |
 | `e2e-robust.mjs` | #12 | 相对定位/缺图形追问/口语动词 |
 | `e2e-canvas-power.mjs` | #13 | 语义模板/文本/改色/导出/回放/拖拽 |
+| `e2e-perf-stress.mjs` | #16 | 60 对象绘制/撤销/重做/回放压测（**待本机实跑**） |
+| `e2e-multi-res.mjs` | #16 | 三档视口比例一致/缩放保心/导出（**待本机实跑**） |
 
 ### 真机语音（已在 Edge + 麦克风环境验证 ✅）
 
@@ -63,7 +70,8 @@
 
 ### 工程收尾
 
-- [ ] **PR 合并**：feat/13-canvas-power → main（当前分支含未提交工作区变更）
-- [ ] 合并后在 main 上完整回归：`npx tsx scripts/parser-smoke.ts` + 全部 `node scripts/e2e-*.mjs`
-- [ ] 多分辨率/缩放下画布表现抽查
-- [ ] 大量对象（50+）下快照/撤销/回放性能压测
+- [x] **PR 合并**：PR #11–#15 已全部合并到 main（含 feat/13-canvas-power）
+- [x] `npx tsx scripts/parser-smoke.ts` 回归通过（feat/16 复跑，含新增 near/inside 断言）
+- [x] 多分辨率/缩放下画布表现抽查 —— 新建 `scripts/e2e-multi-res.mjs`（三档视口 + 缩放保心 + 导出）
+- [x] 大量对象（50+）下快照/撤销/回放性能压测 —— 新建 `scripts/e2e-perf-stress.mjs`（60 对象）
+- [ ] 上述两个新 e2e 脚本需在本机真实 Edge + `npm run dev` 下实跑确认（`npm run e2e` 可串跑全部自断言脚本）
