@@ -198,6 +198,23 @@ export interface RedoCommand {
   action: 'redo'
 }
 
+/**
+ * 从部件目录"下单"放置一个语义对象（LLM 排版器路径，feat/17）。
+ * LLM 对已知对象只需给出 asset id + 摆放参数，执行前由 executeAll 展开成
+ * 多条带 groupName/part 的 path draw——画面质量由预制美术兜底，且天然可编辑。
+ */
+export interface PlaceCommand {
+  action: 'place'
+  /** 部件目录中的资产 id（见 parser/templates.ts ASSETS） */
+  asset: string
+  /** 摆放中心，九宫格语义值或 0~1 比例坐标，省略时画布中心 */
+  position?: SemanticPosition | PositionFraction
+  /** 语义大小，省略时 medium */
+  size?: SemanticSize
+  /** 可选整体着色（覆盖资产默认配色，主要用于单色资产如火柴人） */
+  color?: string
+}
+
 export type DslCommand =
   | DrawCommand
   | SelectCommand
@@ -211,6 +228,7 @@ export type DslCommand =
   | BackgroundCommand
   | ExportCommand
   | ReplayCommand
+  | PlaceCommand
 
 /** 执行结果，message 供 TTS 播报与字幕反馈 */
 export interface ExecResult {

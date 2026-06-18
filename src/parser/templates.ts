@@ -40,36 +40,47 @@ const stickman: Builder = (c, s) => {
   const G = '人'
   return [
     // 头部（14 边形近似圆，填色）
-    { action: 'draw', shape: 'path', props: { color: '#212121', fill: '#212121', points: circlePts(c.fx, c.fy - 0.12 * s, headR), close: true, groupName: G } },
+    { action: 'draw', shape: 'path', props: { color: '#212121', fill: '#212121', points: circlePts(c.fx, c.fy - 0.12 * s, headR), close: true, groupName: G, part: '头' } },
     // 身体
-    { action: 'draw', shape: 'path', props: { color: '#212121', points: [pt(c.fx, c.fy - 0.06 * s), pt(c.fx, c.fy + 0.10 * s)], groupName: G } },
+    { action: 'draw', shape: 'path', props: { color: '#212121', points: [pt(c.fx, c.fy - 0.06 * s), pt(c.fx, c.fy + 0.10 * s)], groupName: G, part: '身体' } },
     // 左腿
-    { action: 'draw', shape: 'path', props: { color: '#212121', points: [pt(c.fx, c.fy + 0.10 * s), pt(c.fx - 0.05 * s * FX, c.fy + 0.22 * s)], groupName: G } },
+    { action: 'draw', shape: 'path', props: { color: '#212121', points: [pt(c.fx, c.fy + 0.10 * s), pt(c.fx - 0.05 * s * FX, c.fy + 0.22 * s)], groupName: G, part: '左腿' } },
     // 右腿
-    { action: 'draw', shape: 'path', props: { color: '#212121', points: [pt(c.fx, c.fy + 0.10 * s), pt(c.fx + 0.05 * s * FX, c.fy + 0.22 * s)], groupName: G } },
+    { action: 'draw', shape: 'path', props: { color: '#212121', points: [pt(c.fx, c.fy + 0.10 * s), pt(c.fx + 0.05 * s * FX, c.fy + 0.22 * s)], groupName: G, part: '右腿' } },
     // 左臂
-    { action: 'draw', shape: 'path', props: { color: '#212121', points: [pt(c.fx, c.fy + 0.02 * s), pt(c.fx - 0.06 * s * FX, c.fy - 0.04 * s)], groupName: G } },
+    { action: 'draw', shape: 'path', props: { color: '#212121', points: [pt(c.fx, c.fy + 0.02 * s), pt(c.fx - 0.06 * s * FX, c.fy - 0.04 * s)], groupName: G, part: '左臂' } },
     // 右臂
-    { action: 'draw', shape: 'path', props: { color: '#212121', points: [pt(c.fx, c.fy + 0.02 * s), pt(c.fx + 0.06 * s * FX, c.fy - 0.04 * s)], groupName: G } },
+    { action: 'draw', shape: 'path', props: { color: '#212121', points: [pt(c.fx, c.fy + 0.02 * s), pt(c.fx + 0.06 * s * FX, c.fy - 0.04 * s)], groupName: G, part: '右臂' } },
   ]
 }
 
-// --- 房子：五边形轮廓填色，1 笔 ---
-const house: Builder = (c, s) => [{
-  action: 'draw', shape: 'path', props: {
-    color: '#8d6e63',
-    fill: '#8d6e63',
-    points: [
-      pt(c.fx - 0.10 * s * FX, c.fy + 0.10 * s),
-      pt(c.fx - 0.10 * s * FX, c.fy - 0.04 * s),
-      pt(c.fx, c.fy - 0.16 * s),
-      pt(c.fx + 0.10 * s * FX, c.fy - 0.04 * s),
-      pt(c.fx + 0.10 * s * FX, c.fy + 0.10 * s),
-    ],
-    close: true,
-    groupName: '房子',
-  },
-}]
+// --- 房子：墙身 + 屋顶，2 笔（拆开屋顶以支持"删掉房子的屋顶"）---
+const house: Builder = (c, s) => {
+  const G = '房子'
+  return [
+    // 墙身（矩形填色）
+    { action: 'draw', shape: 'path', props: {
+      color: '#8d6e63', fill: '#d7ccc8',
+      points: [
+        pt(c.fx - 0.10 * s * FX, c.fy + 0.10 * s),
+        pt(c.fx - 0.10 * s * FX, c.fy - 0.04 * s),
+        pt(c.fx + 0.10 * s * FX, c.fy - 0.04 * s),
+        pt(c.fx + 0.10 * s * FX, c.fy + 0.10 * s),
+      ],
+      close: true, groupName: G, part: '墙身',
+    }},
+    // 屋顶（三角填色）
+    { action: 'draw', shape: 'path', props: {
+      color: '#8d6e63', fill: '#8d6e63',
+      points: [
+        pt(c.fx - 0.12 * s * FX, c.fy - 0.04 * s),
+        pt(c.fx, c.fy - 0.16 * s),
+        pt(c.fx + 0.12 * s * FX, c.fy - 0.04 * s),
+      ],
+      close: true, groupName: G, part: '屋顶',
+    }},
+  ]
+}
 
 // --- 树：树干+树冠，2 笔 ---
 const tree: Builder = (c, s) => {
@@ -86,6 +97,7 @@ const tree: Builder = (c, s) => {
       ],
       close: true,
       groupName: G,
+      part: '树干',
     }},
     // 树冠（多边形填色）
     { action: 'draw', shape: 'path', props: {
@@ -101,6 +113,7 @@ const tree: Builder = (c, s) => {
       ],
       close: true,
       groupName: G,
+      part: '树冠',
     }},
   ]
 }
@@ -110,7 +123,7 @@ const sun: Builder = (c, s) => {
   const G = '太阳'
   const commands: DrawCommand[] = [
     // 圆面（14 边形填色）
-    { action: 'draw', shape: 'path', props: { color: '#fdd835', fill: '#fdd835', points: circlePts(c.fx, c.fy, 0.05 * s), close: true, groupName: G } },
+    { action: 'draw', shape: 'path', props: { color: '#fdd835', fill: '#fdd835', points: circlePts(c.fx, c.fy, 0.05 * s), close: true, groupName: G, part: '圆面' } },
   ]
   // 8 道光芒
   for (let k = 0; k < 8; k++) {
@@ -125,6 +138,7 @@ const sun: Builder = (c, s) => {
           pt(c.fx + Math.cos(a) * outerR * FX, c.fy + Math.sin(a) * outerR),
         ],
         groupName: G,
+        part: '光芒',
       },
     })
   }
@@ -135,8 +149,8 @@ const sun: Builder = (c, s) => {
 const snowman: Builder = (c, s) => {
   const G = '雪人'
   return [
-    { action: 'draw', shape: 'path', props: { color: '#90caf9', fill: '#90caf9', points: circlePts(c.fx, c.fy + 0.06 * s, 0.06 * s), close: true, groupName: G } },
-    { action: 'draw', shape: 'path', props: { color: '#90caf9', fill: '#90caf9', points: circlePts(c.fx, c.fy - 0.04 * s, 0.04 * s), close: true, groupName: G } },
+    { action: 'draw', shape: 'path', props: { color: '#90caf9', fill: '#90caf9', points: circlePts(c.fx, c.fy + 0.06 * s, 0.06 * s), close: true, groupName: G, part: '下身' } },
+    { action: 'draw', shape: 'path', props: { color: '#90caf9', fill: '#90caf9', points: circlePts(c.fx, c.fy - 0.04 * s, 0.04 * s), close: true, groupName: G, part: '头' } },
   ]
 }
 
@@ -145,13 +159,13 @@ const smiley: Builder = (c, s) => {
   const G = '笑脸'
   return [
     // 脸（16 边形填色）
-    { action: 'draw', shape: 'path', props: { color: '#fdd835', fill: '#fdd835', points: circlePts(c.fx, c.fy, 0.06 * s, 16), close: true, groupName: G } },
+    { action: 'draw', shape: 'path', props: { color: '#fdd835', fill: '#fdd835', points: circlePts(c.fx, c.fy, 0.06 * s, 16), close: true, groupName: G, part: '脸' } },
     // 左眼（短线表示点）
-    { action: 'draw', shape: 'path', props: { color: '#212121', points: [pt(c.fx - 0.025 * s * FX, c.fy - 0.025 * s), pt(c.fx - 0.015 * s * FX, c.fy - 0.025 * s)], groupName: G } },
+    { action: 'draw', shape: 'path', props: { color: '#212121', points: [pt(c.fx - 0.025 * s * FX, c.fy - 0.025 * s), pt(c.fx - 0.015 * s * FX, c.fy - 0.025 * s)], groupName: G, part: '左眼' } },
     // 右眼
-    { action: 'draw', shape: 'path', props: { color: '#212121', points: [pt(c.fx + 0.015 * s * FX, c.fy - 0.025 * s), pt(c.fx + 0.025 * s * FX, c.fy - 0.025 * s)], groupName: G } },
+    { action: 'draw', shape: 'path', props: { color: '#212121', points: [pt(c.fx + 0.015 * s * FX, c.fy - 0.025 * s), pt(c.fx + 0.025 * s * FX, c.fy - 0.025 * s)], groupName: G, part: '右眼' } },
     // 嘴巴（弧线）
-    { action: 'draw', shape: 'path', props: { color: '#212121', points: [pt(c.fx - 0.025 * s * FX, c.fy + 0.03 * s), pt(c.fx + 0.025 * s * FX, c.fy + 0.03 * s)], groupName: G } },
+    { action: 'draw', shape: 'path', props: { color: '#212121', points: [pt(c.fx - 0.025 * s * FX, c.fy + 0.03 * s), pt(c.fx + 0.025 * s * FX, c.fy + 0.03 * s)], groupName: G, part: '嘴' } },
   ]
 }
 
@@ -180,4 +194,57 @@ export function expandTemplate(
   const [fx, fy] = position ? POSITION_FRACTIONS[position] : [0.5, 0.5]
   const s = size === 'small' ? 0.7 : size === 'large' ? 1.4 : 1
   return builder({ fx, fy }, s)
+}
+
+// —— 部件目录（feat/17：LLM 排版器从这里"下单"，executor 展开为成组 path）——
+
+export interface AssetMeta {
+  /** 稳定 id，LLM 在 place 指令里引用 */
+  id: string
+  /** 中文标签，同时作为展开后图形的 groupName */
+  label: string
+  /** 部件角色列表，供 LLM 了解可细粒度编辑哪些部分 */
+  parts: string[]
+}
+
+/** id → [元数据, 构建器]。新增资产只改这一处。 */
+const CATALOG: ReadonlyArray<readonly [AssetMeta, Builder]> = [
+  [{ id: 'person', label: '人', parts: ['头', '身体', '左腿', '右腿', '左臂', '右臂'] }, stickman],
+  [{ id: 'house', label: '房子', parts: ['墙身', '屋顶'] }, house],
+  [{ id: 'tree', label: '树', parts: ['树干', '树冠'] }, tree],
+  [{ id: 'sun', label: '太阳', parts: ['圆面', '光芒'] }, sun],
+  [{ id: 'snowman', label: '雪人', parts: ['下身', '头'] }, snowman],
+  [{ id: 'smiley', label: '笑脸', parts: ['脸', '左眼', '右眼', '嘴'] }, smiley],
+]
+
+/** 资产元数据列表（注入提示词、构建目录文档） */
+export const ASSETS: ReadonlyArray<AssetMeta> = CATALOG.map(([meta]) => meta)
+
+/** id 是否在目录中（schema 校验用） */
+export function isAssetId(id: string): boolean {
+  return CATALOG.some(([meta]) => meta.id === id)
+}
+
+/**
+ * 展开一个资产为成组 path 绘制指令（纯函数，不接触画布）。
+ * center/scale 已解析为最终值；color 给定时整体着色（描边 + 已有填充一并替换）。
+ * 未知 id 返回 null。
+ */
+export function expandAsset(
+  id: string,
+  center: PositionFraction,
+  scale: number,
+  color?: string
+): DrawCommand[] | null {
+  const entry = CATALOG.find(([meta]) => meta.id === id)
+  if (!entry) return null
+  const commands = entry[1](center, scale)
+  if (color) {
+    for (const cmd of commands) {
+      if (!cmd.props) continue
+      cmd.props.color = color
+      if (cmd.props.fill) cmd.props.fill = color
+    }
+  }
+  return commands
 }

@@ -3,6 +3,8 @@
  * 用法：npx tsx scripts/parser-smoke.ts
  */
 import { isShapeMissing, parseBrushStep, parseCommand, tryExpandTemplate } from '../src/parser/rules'
+import { ASSETS, expandAsset, isAssetId } from '../src/parser/templates'
+import { validateDsl } from '../src/dsl/schema'
 
 const cases: Array<[string, string]> = [
   ['画一个圆', '基础'],
@@ -140,7 +142,7 @@ const tplCases: Array<[string, number | null]> = [
   ['在左上角画一棵树', 2],
   ['画一个小人', 6], // 头 + 身 + 四肢
   ['画一个大大的笑脸', 4],
-  ['画一个房子，左边加一棵树，右上角有太阳', 12], // 复合：3 模板拆分承接
+  ['画一个房子，左边加一棵树，右上角有太阳', 13], // 复合：房子(墙身+屋顶 2) + 树(2) + 太阳(9)
   ['画一个圆', null], // 基础图形不应被模板接管
 ]
 console.log('\n—— tryExpandTemplate ——')
@@ -154,3 +156,48 @@ for (const [input, expected] of tplCases) {
   const ok = count === expected && (expected === null || allPath)
   console.log(`${ok ? 'OK ' : 'FAIL'} "${input}" -> ${count === null ? 'MISS' : `${count} path`}${ok ? '' : `（预期 ${expected === null ? 'MISS' : expected + ' path'}）`}`)
 }
+
+// 部件目录展开（feat/17）：expandAsset 应产出带 groupName(=label)/part 的成组 path（纯函数，不接触画布）。
+console.log('\n—— expandAsset 部件展开 ——')
+const center = { fx: 0.5, fy: 0.5 }
+const assetCases: Array<[string, number]> = [
+  ['house', 2],   // 墙身 + 屋顶
+  ['tree', 2],    // 树干 + 树冠
+  ['sun', 9],     // 圆面 + 8 光芒
+  ['person', 6],  // 头 + 身 + 四肢
+  ['smiley', 4],
+  ['snowman', 2],
+]
+for (const [id, expectedCount] of assetCases) {
+  const cmds = expandAsset(id, center, 1)
+  const meta = ASSETS.find((a) => a.id === id)
+  const allPathGrouped = !!cmds && cmds.length === expectedCount && cmds.every((c) => {
+    const p = c as { action?: string; shape?: string; props?: { groupName?: string; part?: string } }
+    return p.action === 'draw' && p.shape === 'path' && p.props?.groupName === meta?.label && !!p.props?.part
+  })
+  console.log(`${allPathGrouped ? 'OK ' : 'FAIL'} expandAsset("${id}") -> ${cmds?.length ?? 'null'} path（groupName=${meta?.label}）`)
+}
+// 未知 id 返回 null
+console.log(`${expandAsset('nope', center, 1) === null ? 'OK ' : 'FAIL'} expandAsset("nope") -> null`)
+// 整体着色：person 给红色后每条 path 描边变红
+const reds = expandAsset('person', center, 1, '#e53935')
+const allRed = !!reds && reds.every((c) => (c as { props?: { color?: string } }).props?.color === '#e53935')
+console.log(`${allRed ? 'OK ' : 'FAIL'} expandAsset("person", color=#e53935) 整体着色`)
+
+// place 指令 schema 校验（feat/17）
+console.log('\n—— place schema 校验 ——')
+const placeCases: Array<[unknown, boolean, string]> = [
+  [{ action: 'place', asset: 'house' }, true, '最简 place'],
+  [{ action: 'place', asset: 'tree', position: 'top-left', size: 'large' }, true, '语义位置+大小'],
+  [{ action: 'place', asset: 'person', position: { fx: 0.3, fy: 0.6 }, color: '#212121' }, true, '比例坐标+着色'],
+  [{ action: 'place', asset: 'dragon' }, false, '未知 asset 应拒'],
+  [{ action: 'place', asset: 'house', position: 'middle' }, false, '非法九宫格应拒'],
+  [{ action: 'place', asset: 'house', color: 'red' }, false, '非 hex 颜色应拒'],
+  [{ action: 'place', asset: 'house', size: 'huge' }, false, '非法大小应拒'],
+]
+for (const [cmd, expectOk, label] of placeCases) {
+  const r = validateDsl(cmd)
+  const ok = r.ok === expectOk
+  console.log(`${ok ? 'OK ' : 'FAIL'} ${label} -> ${r.ok ? 'accept' : `reject(${r.error})`}`)
+}
+console.log(`${isAssetId('house') && !isAssetId('nope') ? 'OK ' : 'FAIL'} isAssetId`)

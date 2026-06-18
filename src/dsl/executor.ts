@@ -24,6 +24,7 @@ import {
   type DrawCommand,
   type ExecResult,
   type MoveCommand,
+  type PlaceCommand,
   type PositionFraction,
   type RelativeTo,
   type ResizeCommand,
@@ -35,6 +36,7 @@ import {
   type StyleCommand,
   type TargetSpec,
 } from './types'
+import { expandAsset } from '../parser/templates'
 
 /**
  * DSL 执行引擎：将语义化指令换算为像素并落到 Konva 画布。
@@ -828,7 +830,41 @@ export function execute(cmd: DslCommand): ExecResult {
       return execExport()
     case 'replay':
       return useHistoryStore().replay()
+    case 'place':
+      // place 应在 executeAll 入口被 expandPlaceCommands 展开成 draw，不应到达这里
+      return { ok: false, message: '内部错误：place 指令未展开' }
   }
+}
+
+/**
+ * 把 place 指令展开成成组 path draw（feat/17 部件目录路径）。
+ * 在 executeAll 最前面运行，使展开结果走完整的 groupId 分配/快照/逐笔描画流程，
+ * 与 LLM 直接输出的 path、规则引擎的基础图形完全同构——天然可整体移动/缩放/删除。
+ */
+function expandPlaceCommands(commands: DslCommand[]): DslCommand[] {
+  const out: DslCommand[] = []
+  for (const cmd of commands) {
+    if (cmd.action !== 'place') {
+      out.push(cmd)
+      continue
+    }
+    const center = resolvePlaceCenter(cmd.position)
+    const scale = cmd.size === 'small' ? 0.7 : cmd.size === 'large' ? 1.4 : 1
+    const expanded = expandAsset(cmd.asset, center, scale, cmd.color)
+    // 未知 asset 已被 schema 拦截；防御性地原样跳过（不致整批失败）
+    if (expanded) out.push(...expanded)
+  }
+  return out
+}
+
+/** place 的 position（九宫格语义值 / 比例坐标 / 省略）→ 比例坐标中心 */
+function resolvePlaceCenter(position: PlaceCommand['position']): PositionFraction {
+  if (position === undefined) return { fx: 0.5, fy: 0.5 }
+  if (typeof position === 'string') {
+    const [fx, fy] = POSITION_FRACTIONS[position]
+    return { fx, fy }
+  }
+  return position
 }
 
 /** 改变画布状态、需要进入撤销历史的指令（select 只改高亮，undo/redo 自身操作历史） */
@@ -886,6 +922,9 @@ function autoCompact(commands: DslCommand[]): void {
  * 画布不会停在半完成状态。
  */
 export function executeAll(commands: DslCommand[]): ExecResult {
+  // 部件目录展开：place"下单"先变成成组 path draw，再走后续统一流程
+  commands = expandPlaceCommands(commands)
+
   // 预扫描：为带 groupName 的 draw 指令自动分配 groupId
   // 同批次中同名 groupName 共享同一个 groupId，不同批次各自独立
   const groupMap = new Map<string, string>()

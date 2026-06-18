@@ -11,6 +11,7 @@ import {
   type RelativeTo,
   type TargetSpec,
 } from './types'
+import { isAssetId } from '../parser/templates'
 
 const HEX_COLOR = /^#[0-9a-fA-F]{3,8}$/
 
@@ -408,6 +409,37 @@ function validateOne(v: unknown): { ok: true; command: DslCommand } | { ok: fals
       return { ok: true, command: { action: 'export' } }
     case 'replay':
       return { ok: true, command: { action: 'replay' } }
+    case 'place': {
+      if (typeof v.asset !== 'string' || !isAssetId(v.asset)) {
+        return { ok: false, error: `未知部件: ${String(v.asset)}` }
+      }
+      const command: DslCommand = { action: 'place', asset: v.asset }
+      if (v.position !== undefined) {
+        if (typeof v.position === 'string') {
+          if (!SEMANTIC_POSITIONS.includes(v.position as never)) {
+            return { ok: false, error: `非法位置: ${String(v.position)}` }
+          }
+          command.position = v.position as never
+        } else if (isFraction(v.position)) {
+          command.position = { fx: v.position.fx, fy: v.position.fy }
+        } else {
+          return { ok: false, error: '非法位置：需为九宫格语义值或 0~1 比例坐标 {fx, fy}' }
+        }
+      }
+      if (v.size !== undefined) {
+        if (!SEMANTIC_SIZES.includes(v.size as never)) {
+          return { ok: false, error: `非法大小: ${String(v.size)}（place 仅支持语义大小）` }
+        }
+        command.size = v.size as never
+      }
+      if (v.color !== undefined) {
+        if (typeof v.color !== 'string' || !HEX_COLOR.test(v.color)) {
+          return { ok: false, error: `非法颜色值: ${String(v.color)}` }
+        }
+        command.color = v.color
+      }
+      return { ok: true, command }
+    }
     default:
       return { ok: false, error: `不支持的操作: ${String(v.action)}` }
   }

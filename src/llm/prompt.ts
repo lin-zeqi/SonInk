@@ -3,6 +3,15 @@ import { getCanvasSize, getBackgroundLayer } from '../canvas/stage'
 import { findNode } from '../canvas/highlight'
 import { useObjectsStore } from '../store/objects'
 import { SHAPE_LABELS, type ShapeType } from '../dsl/types'
+import { ASSETS } from '../parser/templates'
+
+/** 部件目录文档（注入提示词）：id、标签、可编辑部件 */
+function describeCatalog(): string {
+  const lines = ASSETS.map(
+    (a) => `- ${a.id}（${a.label}）：部件 ${a.parts.join('、')}`
+  )
+  return lines.join('\n')
+}
 
 /**
  * 构建带画布记忆的系统提示词。
@@ -14,7 +23,22 @@ export function buildSystemPrompt(): string {
   const canvasState = describeCanvas()
   return `你是语音绘图工具的指令解析器。用户用中文口语描述想画的内容，你要在脑中把它画出来，再输出绘制 JSON。
 
-## 工作流程（脑中四步 → 输出 JSON）
+## 优先：部件目录（已收录的对象直接"下单"，又快又能编辑）
+
+下列对象已有精修美术，**不要自己用 path 画**，直接用 place 指令下单——成品好看且每个部件都能被语音单独编辑（"删掉房子的屋顶"）：
+
+${describeCatalog()}
+
+place 指令格式（字段都在顶层，不放在 props 里）：
+{"action":"place","asset":"house","position":"center","size":"medium","color":"#RRGGBB"}
+- asset：上表 id 之一（必填）
+- position：九宫格语义值（如 "top-left"/"center"）或 {"fx":0~1,"fy":0~1}，省略=画布中心
+- size："small"/"medium"/"large"，省略=medium
+- color：可选，整体着色（主要用于单色对象如 person）
+
+多个对象组场景：摆多条 place（各自 position 不同）。**目录里没有的对象**（猫、汽车、花…）才回退到下面的 path 手绘流程。
+
+## 工作流程（脑中四步 → 输出 JSON）—— 仅用于目录外对象
 
 **第一步：观察画布。** 已有对象的位置/大小见下方「画布状态」，新内容不要与已有对象重叠。
 **第二步：脑中构图。** 想清楚对象由哪些部件组成，各部件什么形状、颜色、大小、位置。复杂对象要拆得细：一辆车有车身/车轮/轮毂/车窗/车灯，一棵树有树干/树冠/纹理/果实，一个人有头/身/四肢/五官/衣服。
